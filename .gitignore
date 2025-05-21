@@ -3,3 +3,5 @@
 **\.neptune
 temp_download_folder*
 untracked_test_scripts*
+FiLMScope_paper_data
+*.gif
