@@ -8,6 +8,7 @@ from .log_manager import NeptuneLogManager
 import torch
 from torch.utils.data import DataLoader
 import torch.optim as optim
+import time 
 
 class RunManager:
     def __init__(self, config_dict, guide_map=None,
@@ -18,6 +19,7 @@ class RunManager:
         self.info = config_dict["sample_info"]
         self.loss_w = config_dict["loss_weights"]
 
+        ##### TIME TO SETUP VOLUMES #####
         self.guide_map = guide_map
         if self.guide_map is not None: 
             self.guide_map = self.guide_map.cuda()
@@ -53,6 +55,22 @@ class RunManager:
             pin_memory=True
         )
 
+        # prepare other things needed throughout reconstruction
+        self.setup_time = time.perf_counter() # start
+        self.reference_image = self.dataset.reference_image.cuda()
+        self.reference_shift_slopes = self.dataset.ref_camera_shift_slopes.cuda()
+        self.depth_values = torch.linspace(
+                self.info["depth_range"][0],
+                self.info["depth_range"][1],
+                self.run_args["num_depths"], dtype=torch.float32)
+        self.depth_values = tocuda(self.depth_values)
+
+        self.prepare_volume()
+        self.dataset.to_device("cuda")
+
+        self.setup_time = time.perf_counter() - self.setup_time # startup time
+        ##### TIME TO SETUP VOLUMES #####
+
         if prev_model is not None:
             self.model = prev_model
         else:
@@ -79,22 +97,10 @@ class RunManager:
             smooth_lambda=self.loss_w["smooth_lambda"]
         ).cuda()
 
-        # prepare other things needed throughout reconstruction
-        self.reference_image = self.dataset.reference_image.cuda()
-        self.reference_shift_slopes = self.dataset.ref_camera_shift_slopes.cuda()
-        self.depth_values = torch.linspace(
-                self.info["depth_range"][0],
-                self.info["depth_range"][1],
-                self.run_args["num_depths"], dtype=torch.float32)
-        self.depth_values = tocuda(self.depth_values)
-
-        self.prepare_volume()
-
-        self.dataset.to_device("cuda")
-
         self.logger = None
         if config_dict["use_neptune"]:
             self.setup_logger()
+
 
     def prepare_volume(self):
         with torch.no_grad():
