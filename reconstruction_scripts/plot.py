@@ -8,6 +8,8 @@ import pickle
 import pandas as pd 
 
 time = input("Enter the time:")
+if len(time) == 0:
+    time = '2025-05-28_16:13:35'
 sample_name = "knuckle_video"
 filename = f'timings/video-reconstruction_{sample_name}.npy'
 times = np.load(filename, allow_pickle = True).item()
@@ -41,56 +43,62 @@ ax.set_xlabel('Downsampling Factors')
 ax.set_ylabel("Time (in seconds)")
 ax.legend()
 fig.savefig(f"plots/{time}/timing/{sample_name}/setup.png")
-"""
-directory = Path(f"plots/{time}/heightmap/{sample_name}")
-heightmaps_filenames = {downsample : sorted(file for file in directory.glob(f"*ds{downsample}.png")) for downsample in downsample_factors}
 
-# try:
-#     os.makedirs(f"animations/{sample_name}")
-# except FileExistsError:
-#     pass 
-
-# for factor in downsample_factors:
-#     images = [imageio.imread(f) for f in heightmaps_filenames[factor]]
-#     imageio.mimsave(f'animations/animation_{factor}.gif', images, duration=0.2, loop = 0)  # duration is per frame in seconds
-"""
-with open("rmses.pkl", 'rb') as rmse_file:
-    rmses = pickle.load(rmse_file)
-
-with open("ssim.pkl", 'rb') as ssim_file:
-    ssims = pickle.load(ssim_file)
+with open("metrics.pkl", 'rb') as metrics_file:
+    metrics = pickle.load(metrics_file)
+metrics = metrics[420]
+print(metrics)
 
 
-rmses_df_dict = {
-    arrangement : pd.DataFrame.from_dict(rmses[arrangement], orient = 'columns') for arrangement in rmses
-}
-
-ssims_df_dict = {
-    arrangement : pd.DataFrame.from_dict(ssims[arrangement], orient = 'columns') for arrangement in ssims
+metrics_dict = {
+    arrangement : pd.DataFrame.from_dict(metrics[arrangement], orient = 'columns') for arrangement in metrics
 }
  
+num_camera_types = len(times.keys())
 
-for arrangement in times:
-    rmses_df = rmses_df_dict[arrangement]
-    ssims_df = ssims_df_dict[arrangement]
-    fig = plt.figure()
-    for col in rmses_df.columns:
-        plt.plot(rmses_df.index, rmses_df[col], label=f'{col}')
+fig_rmse, axs_rmse = plt.subplots(1, num_camera_types, sharey = True, figsize=(30, 6))
+fig_ssim, axs_ssim = plt.subplots(1, num_camera_types, sharey = True, figsize=(30, 6))
 
-    plt.title("RMSE between Gold Standard and 3D Reconstructions\n(Each line corresponds to a downsampling factor)")
-    plt.xlabel("Iteration")
-    plt.ylabel("RMSE")
-    plt.legend(title="Downsampling Factors")
-    plt.tight_layout()
-    fig.savefig(f"plots/{time}/rmses_{arrangement}.png")
+for arrangements_i, arrangement in enumerate(times):
+    metrics_df = metrics_dict[arrangement]
 
-    fig = plt.figure()
-    for col in ssims_df.columns:
-        plt.plot(ssims_df.index, ssims_df[col], label=f'{col}')
+    for col in metrics_df.columns:
+        axs_rmse[arrangements_i].plot(metrics_df[col]['duration'], metrics_df[col]['RMSE'], label=f'{col}')
+        axs_ssim[arrangements_i].plot(metrics_df[col]['duration'], metrics_df[col]['SSIM'], label=f'{col}')
 
-    plt.title("SSIM between Gold Standard and 3D Reconstructions\n(Each line corresponds to a downsampling factor)")
-    plt.xlabel("Iteration")
-    plt.ylabel("SSIM")
-    plt.legend(title="Downsampling Factors")
-    plt.tight_layout()
-    fig.savefig(f"plots/{time}/ssims_{arrangement}.png")
+    if arrangements_i == 0:
+        axs_rmse[arrangements_i].set_ylabel("RMSE")
+        axs_ssim[arrangements_i].set_ylabel("SSIM")
+    elif arrangements_i == num_camera_types // 2:
+        axs_rmse[arrangements_i].set_xlabel("Time (in seconds)")  
+        axs_ssim[arrangements_i].set_xlabel("Time (in seconds)")
+
+    axs_rmse[arrangements_i].set_title(f"{arrangement}")
+    axs_ssim[arrangements_i].set_title(f"{arrangement}")
+
+    axs_rmse[arrangements_i].legend()
+    axs_ssim[arrangements_i].legend()
+    axs_rmse[arrangements_i].set_xlim(0, 25)
+    axs_ssim[arrangements_i].set_xlim(0, 25)
+
+fig_rmse.suptitle("RMSE Between Gold Standard and Height Reconstructions, Across Downsampling Factors")
+fig_rmse.tight_layout()
+fig_rmse.savefig(f"plots/{time}/rmses-og.png")
+
+fig_ssim.suptitle("Structural Similarity Between Gold Standard and Height Reconstructions, Across Downsampling Factors")
+fig_ssim.tight_layout()
+fig_ssim.savefig(f"plots/{time}/ssims-og.png")
+
+for arrangement in metrics.keys():
+    metric_by_arrangements = metrics[arrangement]
+    for downsampling in metric_by_arrangements.keys():
+        metric_by_arrds = metric_by_arrangements[downsampling]
+        fig, axs = plt.subplots(1, 2)
+        axs[0].imshow(metric_by_arrds['bestimage_RMSE'], cmap = 'turbo')
+        axs[0].axis('off')
+        axs[1].imshow(metric_by_arrds['bestimage_SSIM'], cmap = 'turbo')
+        axs[1].axis('off')
+        axs[0].set_title(f"RMSE = {round(metric_by_arrds['best_RMSE'], 3)}\nIteration {metric_by_arrds['best_RMSE_it']} (after {round(metric_by_arrds['best_RMSE_time'], 2)}s)")
+        axs[1].set_title(f"SSIM = {round(metric_by_arrds['best_SSIM'], 3)}\nIteration {metric_by_arrds['best_SSIM_it']} (after {round(metric_by_arrds['best_SSIM_time'], 2)}s)")
+        fig.suptitle(f"Best Images\nDownsampling Factor: {downsampling}\nCamera Arrangement: {arrangement}")
+        fig.savefig(f"plots/{time}/best_{arrangement}_{downsampling}-og.png")

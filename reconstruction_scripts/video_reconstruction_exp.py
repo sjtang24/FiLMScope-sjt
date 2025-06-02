@@ -41,6 +41,7 @@ log_description = "shortened knuckle video recon"
 image_filename = get_sample_information(sample_name)["image_filename"]
 dset = xr.open_dataset(path_to_data + '/' + image_filename)
 frame_numbers = dset.frame_number.data
+input(frame_numbers)
 
 dset = None
 
@@ -56,7 +57,7 @@ except FileExistsError:
     pass
 
 # TODO Choose hyperparameters to loop through
-frame_numbers = np.asarray([420])
+frame_numbers = np.asarray([420, 421])
 downsample_factors = [1, 2, 4, 8, 16, 32]
 num_cameras = 48
 camera_arrangements = {
@@ -71,7 +72,9 @@ camera_arrangements = {
 times = {key : np.zeros((len(downsample_factors), frame_numbers.size)) for key in camera_arrangements}
 setup_times = {key : np.zeros(len(downsample_factors)) for key in camera_arrangements}
 gold_standards = None
-RMSE = None
+metrics = None
+iterations = 150
+display_freq = 10
 
 for arrangement_i, arrangement in enumerate(camera_arrangements):
     print(f"Arrangement: {arrangement}")
@@ -81,8 +84,8 @@ for arrangement_i, arrangement in enumerate(camera_arrangements):
                                         camera_set="custom", use_neptune=use_neptune,
                                         custom_image_numbers=camera_arrangements[arrangement],
                                         log_description=log_description, frame_number=frame_numbers[0],
-                                        run_args={"iters": 150, "batch_size": 12, "num_depths": 32,
-                                                    "display_freq": 25})
+                                        run_args={"iters": iterations, "batch_size": 12, "num_depths": 32,
+                                                    "display_freq": display_freq})
         run_manager = RunManager(config_dict)
         setup_times[arrangement][downsample_i] = run_manager.setup_time
         #print(run_manager.setup_time)
@@ -95,8 +98,9 @@ for arrangement_i, arrangement in enumerate(camera_arrangements):
             -crop_coords if crop_coords < 0 else crop_coords 
             for crop_coords in indices
         ])
-        sx, sy = startx * downsample, starty * downsample
-        ex, ey = endx * downsample, endy * downsample
+        cropping = 64
+        sx, sy = startx * downsample + cropping, starty * downsample + cropping
+        ex, ey = endx * downsample - cropping, endy * downsample - cropping 
         
         # perform reconstruction
         # if convergence happens quickly for some frames, 
@@ -104,10 +108,30 @@ for arrangement_i, arrangement in enumerate(camera_arrangements):
         # or to manually move on to the next frame
         run_args = config_dict["run_args"]
         if downsample == 1 and arrangement == 'all_cameras': 
-            gold_standards = {fn : None for fn in frame_numbers}
-            RMSE = {cams : {ds : [] for ds in downsample_factors if ds > 1} for cams in camera_arrangements}
-            SSIM = {cams : {ds : [] for ds in downsample_factors if ds > 1} for cams in camera_arrangements}
-        
+            gold_standards = {fm : None for fm in frame_numbers}
+            metrics = {
+                fm : {
+                    cams : {
+                        ds : {
+                            'RMSE' : np.zeros(iterations), 
+                            'SSIM' : np.zeros(iterations),
+                            'duration' : np.zeros(iterations), 
+                            'bestimage_RMSE' : None,
+                            'bestimage_SSIM' : None,
+                            'best_RMSE' : np.inf,
+                            'best_RMSE_it' : 0,
+                            'best_RMSE_time' : 0,
+                            'best_SSIM' : -np.inf,
+                            'best_SSIM_it' : 0,
+                            'best_SSIM_time' : 0
+                        } for ds in downsample_factors
+                    } for cams in camera_arrangements
+                } for fm in frame_numbers
+            } 
+            for fm in frame_numbers:
+               del metrics[fm]['all_cameras'][1]
+            #input(metrics)
+
         for frame_number_i, frame_number in enumerate(frame_numbers):
             #print("")
             #print("enter 'iters: {number}' to adjust # iterations for the NEXT frame")
@@ -115,6 +139,7 @@ for arrangement_i, arrangement in enumerate(camera_arrangements):
             #print("")
 
             # useful to update description for each frame
+            print(f"Camera Arrangements: {camera_arrangements[arrangement]}")
             run_manager.config_dict["log_description"] = f"frame {frame_number} " + log_description
             run_manager.swap_frames(frame_number)
             
@@ -122,14 +147,13 @@ for arrangement_i, arrangement in enumerate(camera_arrangements):
             #print(f"Starting frame {frame_number}")
             # disable = True removes the progress bar 
             duration = 0
-            for i in tqdm(range(run_args["iters"]), disable = downsample > 1):
+            for i in tqdm(range(run_args["iters"])):
                 done = i == run_args["iters"] - 1
                 display = i % run_args["display_freq"] == 0
                 log = done or display 
-
-                start_time = time.perf_counter()
-                _, _, _, outputs, loss_values = run_manager.run_epoch(i, log and use_neptune)
-                duration += (time.perf_counter() - start_time)
+                
+                _, _, _, outputs, time_in_ms, loss_values = run_manager.run_epoch(i, log and use_neptune)
+                duration += time_in_ms
                 losses.append(float(loss_values["total"]))
                 
                 # check here for terminal inputs to move on to next frame if desired
@@ -152,9 +176,10 @@ for arrangement_i, arrangement in enumerate(camera_arrangements):
                 heightmap = outputs["depth"].detach().cpu().squeeze().numpy()
 
                 if done:
+                    print("Storing gold standard!")
                     if downsample == 1 and arrangement == 'all_cameras': 
-                        gold_standards[frame_number] = heightmap
-                    times[arrangement][downsample_i, frame_number_i] = duration
+                        gold_standards[frame_number] = heightmap[sx:ex, sy:ey]
+                    times[arrangement][downsample_i, frame_number_i] = duration / 1000
 
                 # TODO change this to linear interpolation
                 #expanded_heightmap = heightmap.repeat_interleave(downsample, dim = 0).repeat_interleave(downsample, dim = 1)[
@@ -163,20 +188,32 @@ for arrangement_i, arrangement in enumerate(camera_arrangements):
                 expanded_heightmap = zoom(heightmap, zoom=downsample, order=1)[sx:ex, sy:ey]  # order=1 means linear interpolation   
                 reference = run_manager.reference_image.cpu().squeeze()[startx:endx, starty:endy]
 
-                if downsample > 1:
-                    RMSE[arrangement][downsample].append(
-                        float(np.sqrt(
-                            np.sum(
-                                np.square(
-                                    expanded_heightmap - gold_standards[frame_number]
-                                )
+                if not (downsample == 1 and arrangement == 'all_cameras'):
+                    curr_metrics = metrics[frame_number][arrangement][downsample]
+                    rmse = float(np.sqrt(
+                        np.mean(
+                            np.square(
+                                expanded_heightmap - gold_standards[frame_number]
                             )
-                        ))
-                    )
+                        )
+                    ))        
                     mssim = structural_similarity(
                         expanded_heightmap, gold_standards[frame_number], full=False
                     )
-                    SSIM[arrangement][downsample].append(mssim)
+
+                    curr_metrics['RMSE'][i] = rmse
+                    curr_metrics['SSIM'][i] = mssim
+                    curr_metrics['duration'][i] = duration / 1000
+                    if curr_metrics['best_RMSE'] > rmse:
+                        curr_metrics['best_RMSE'] = rmse
+                        curr_metrics['bestimage_RMSE'] = expanded_heightmap
+                        curr_metrics['best_RMSE_it'] = i
+                        curr_metrics['best_RMSE_time'] = curr_metrics['duration'][i]
+                    if curr_metrics['best_SSIM'] < mssim:
+                        curr_metrics['best_SSIM'] = mssim
+                        curr_metrics['bestimage_SSIM'] = expanded_heightmap
+                        curr_metrics['best_SSIM_it'] = i
+                        curr_metrics['best_SSIM_time'] = curr_metrics['duration'][i]
 
                 if log and not use_neptune:                
                     fig = plt.figure()
@@ -190,7 +227,7 @@ for arrangement_i, arrangement in enumerate(camera_arrangements):
                     ax2.axis('off')
 
                     ax2.imshow(expanded_heightmap, cmap = 'turbo')
-                    if gold_standards != None and gold_standards[frame_number] is not None:
+                    if gold_standards is not None and gold_standards[frame_number] is not None:
                         ax1.imshow(gold_standards[frame_number], cmap='turbo')
                     ax0.imshow(reference, cmap='gray')
                     ax2.set_title(f"Reconstructed")
@@ -210,11 +247,9 @@ for arrangement_i, arrangement in enumerate(camera_arrangements):
             # print(f"Execution runtime for frame: {frame_duration}s")
         #print(f"Total runtime for downsample factor {downsample}: {np.sum(times[downsample_i, :])}s")
         #print(f"Runtime/Frame for downsample factor {downsample}: {np.mean(times[downsample_i, :])}s +/- {np.std(times[downsample_i, :])}")
-        print(RMSE)
+        print(metrics)
 np.save(f"timings/video-reconstruction_{sample_name}.npy", times)
 np.save(f"timings/setup_{sample_name}.npy", setup_times)
 
-with open('rmses.pkl', 'wb') as f:
-    pickle.dump(RMSE, f)
-with open('ssim.pkl', 'wb') as f:
-    pickle.dump(SSIM, f)   
+with open('metrics.pkl', 'wb') as f:
+    pickle.dump(metrics, f)

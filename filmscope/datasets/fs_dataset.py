@@ -324,7 +324,8 @@ class FSDataset(Dataset):
         # this is  new, and a lot of this is copy paste
         # should condense into a function that can be used here and in the __init__ func
         if isinstance(self.full_crops, dict):
-            for image_number in self.image_numbers.tolist():
+            print(self.images.shape)
+            for im_num_i, image_number in enumerate(self.image_numbers.tolist()):
                 startx, endx, starty, endy = self.full_crops[image_number]
 
                 startx2 = max(startx, 0)
@@ -341,8 +342,8 @@ class FSDataset(Dataset):
                 else:
                     endy = endy - starty
 
-                self.images[image_number, :, startx2 - startx:endx, starty2 - starty:endy] = (
-                    images[image_number, startx2:endx2, starty2:endy2].permute([2, 0, 1]))
+                self.images[im_num_i, :, startx2 - startx:endx, starty2 - starty:endy] = (
+                    images[im_num_i, startx2:endx2, starty2:endy2].permute([2, 0, 1]))
             return
 
         # crop

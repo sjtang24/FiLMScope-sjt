@@ -194,6 +194,9 @@ class RunManager:
         return outputs, loss_values
 
     def run_epoch(self, i, log=False):
+        start = torch.cuda.Event(enable_timing = True)
+        end = torch.cuda.Event(enable_timing = True)
+        start.record()
         sample = self.dataset.get_full_sample()
         numbers = sample['image_numbers'].tolist()
         outputs, loss_values = self.train_sample(sample)
@@ -208,8 +211,10 @@ class RunManager:
                 print("only set up for logging with Neptune")
             else:
                 self.log_results(mask_images, warp_images, outputs, i) 
-
-        return mask_images, warp_images, numbers, outputs, loss_values 
+        end.record() 
+        torch.cuda.synchronize()
+        elapsed_in_ms = start.elapsed_time(end)
+        return mask_images, warp_images, numbers, outputs, elapsed_in_ms, loss_values 
 
     def log_results(self, mask_images, warp_images, outputs, epoch):
         # log the model 
