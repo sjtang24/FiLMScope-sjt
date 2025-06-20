@@ -9,9 +9,10 @@ import pandas as pd
 
 time = input("Enter the time:")
 if len(time) == 0:
-    time = '2025-05-28_16:13:35'
+    time = '2025-06-03_17:38:24'
 sample_name = "knuckle_video"
 filename = f'timings/video-reconstruction_{sample_name}.npy'
+filename = "metrics.pkl"
 times = np.load(filename, allow_pickle = True).item()
 startup_times = np.load(f"timings/setup_{sample_name}.npy", allow_pickle = True).item()
 downsample_factors = np.array([1, 2, 4, 8, 16, 32])

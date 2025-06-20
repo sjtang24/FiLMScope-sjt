@@ -8,3 +8,5 @@ FiLMScope_paper_data
 *.png
 *.npy
 *.pkl
+*.csv
+*.zip

@@ -9,12 +9,13 @@ import pandas as pd
 
 sample_name = "knuckle_video"
 time = "2025-05-25_12:52:06"
-directory = Path(f"plots/{time}/heightmap/{sample_name}")
+path_dir = "plots/3dheightmap"
+directory = Path(path_dir)
 
 def numeric_sort_key(path):
     # Extract all numbers in the filename and return them as a tuple of ints
-    return int(path.stem)
-
+    return int(path.stem.split("-")[-1])
+"""
 downsample_factors = np.array([1, 2, 4, 8, 16, 32])
 camera_arrangements = ['all_cameras', 'wide_sparse', 'narrow_sparse', '2x2 grid', '4x4 grid']
 heightmaps_filenames = {
@@ -24,16 +25,23 @@ heightmaps_filenames = {
     }
     for downsample in downsample_factors
 }
+"""
 
+frames = sorted(
+    (file for file in directory.glob(f"3d-*.png")), 
+    key = numeric_sort_key
+)
 pause_frames = 20
-frame_duration = 0.1  # seconds (100 ms per frame)
+frame_duration = 0.5  # seconds (100 ms per frame)
 
-for factor in downsample_factors:
-    for arrangement in camera_arrangements:
-        images = [imageio.imread(f) for f in heightmaps_filenames[factor][arrangement]]
-        imageio.mimsave(
-            f'animations/animation_{factor}_{arrangement}.gif',
-            images,
-            duration=frame_duration,
-            loop=0
-        )
+"""for factor in downsample_factors:
+    for arrangement in camera_arrangements:"""
+
+images = [imageio.imread(f) for f in frames]
+
+imageio.mimsave(
+    f'animations/animation.gif',
+    images,
+    duration=frame_duration,
+    loop=0
+)

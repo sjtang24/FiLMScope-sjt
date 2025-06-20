@@ -20,19 +20,20 @@ import numpy as np
 import torch 
 from datetime import datetime
 import pickle
+import argparse
+
 
 use('Agg') # display in matplotlib
 
-print(torch.cuda.device_count())
 # select sample name and gpu number
 sample_name = "knuckle_video"
-gpu_number = '0' 
 if torch.cuda.is_available():
-    print(f"GPUs Available: {torch.cuda.device_count()} (Using 1)")
-    gpu_number = '1' 
+    print(f"GPUs Available: {torch.cuda.device_count()} (Using 0)")
+    gpu_number = '0' 
+    os.environ["CUDA_VISIBLE_DEVICES"] = gpu_number
 else:
-    print("No GPUs available!")
-os.environ["CUDA_VISIBLE_DEVICES"] = gpu_number
+    os.environ["CUDA_VISIBLE_DEVICES"] = ""
+    print("No GPUs available! Not using any GPU's")
 
 # used for neptune logging only
 log_description = "shortened knuckle video recon"
@@ -41,53 +42,128 @@ log_description = "shortened knuckle video recon"
 image_filename = get_sample_information(sample_name)["image_filename"]
 dset = xr.open_dataset(path_to_data + '/' + image_filename)
 frame_numbers = dset.frame_number.data
-input(frame_numbers)
 
+input(frame_numbers)
+#input(frame_numbers)
 dset = None
 
 use_neptune = False
 
-time_at_start = datetime.today().strftime('%Y-%m-%d_%H:%M:%S')
-try:
-    os.makedirs(f"plots/{time_at_start}/heightmap/{sample_name}")
-    os.makedirs(f"plots/{time_at_start}/losses/{sample_name}")
-    os.makedirs(f"plots/{time_at_start}/timing/{sample_name}")
-    os.makedirs(f"timings/{time_at_start}")
-except FileExistsError:
-    pass
-
 # TODO Choose hyperparameters to loop through
-frame_numbers = np.asarray([420, 421])
-downsample_factors = [1, 2, 4, 8, 16, 32]
-num_cameras = 48
+#frame_numbers = np.asarray([420, 421])
+parser = argparse.ArgumentParser(description="Run reconstruction with parameters.")
+parser.add_argument("--iters", type=int, help="Number of Iterations to run after calibration step")
+parser.add_argument("--new_gold_standards", action="store_true", help="use previously run gold standards?")
+args = parser.parse_args()
+
+downsample_factors = [1, 2, 4, 8]
 camera_arrangements = {
-    'all_cameras' : np.arange(0, num_cameras).tolist(),
+    'all_cameras' : np.arange(0, 48).tolist(),
     'wide_sparse' : [6, 10, 20, 30, 34],
     'narrow_sparse' : [14, 16, 20, 26, 28],
     '2x2 grid' : [20, 21, 26, 27],
     '4x4 grid' : [13, 14, 15, 16, 19, 20, 21, 22, 25, 26, 27, 28, 31, 32, 33, 34]
 }
+calib_iterations = 150
+iterations = args.iters
+display_freq = 150
+
+#time_at_start = datetime.today().strftime('%Y-%m-%d_%H:%M:%S')
+heightmaps_dir = f"plots/{sample_name}/{args.iters}/heightmap"
+losses_dir = f"plots/{sample_name}/{args.iters}/losses"
+try:
+    os.makedirs(heightmaps_dir)
+    os.makedirs(losses_dir)
+    os.makedirs("data")
+except FileExistsError:
+    pass
+
+# INITIALIZATIONS 
 
 #downsample_factors = [downsample]
-times = {key : np.zeros((len(downsample_factors), frame_numbers.size)) for key in camera_arrangements}
-setup_times = {key : np.zeros(len(downsample_factors)) for key in camera_arrangements}
+#times = {key : np.zeros((len(downsample_factors), frame_numbers.size)) for key in camera_arrangements}
+#setup_times = {key : np.zeros(len(downsample_factors)) for key in camera_arrangements}
 gold_standards = None
-metrics = None
-iterations = 150
-display_freq = 10
+if not args.new_gold_standards:
+    try:
+        with open("data/gold-standards.pkl", 'rb') as gold_standards_file:
+            gold_standards = pickle.load(gold_standards_file)
+    except Exception as e:
+        print("Failed to load existing gold standards:", e)
+        gold_standards = None 
 
+is_dict = isinstance(gold_standards, dict)
+has_all_frames = is_dict and set(gold_standards.keys()) == set(frame_numbers)
+has_all_reconstructions = has_all_frames and all(v is not None for v in gold_standards.values())
+
+if args.new_gold_standards or not has_all_reconstructions:
+    print("Gold standards have not all been reconstructed. Restarting...")
+    gold_standards = {fm : None for fm in frame_numbers}
+else:
+    print("Using existing gold standards...")
+
+metrics = {
+    cams : {
+        ds : {
+            fm : {
+                'RMSE' : np.zeros(calib_iterations if fm == frame_numbers[0] else iterations), 
+                'SSIM' : np.zeros(calib_iterations if fm == frame_numbers[0] else iterations),
+                'duration' : np.zeros(calib_iterations if fm == frame_numbers[0] else iterations), 
+                'bestimage_RMSE' : None,
+                'bestimage_SSIM' : None,
+                'best_RMSE' : np.inf,
+                'best_RMSE_it' : 0,
+                'best_RMSE_time' : 0,
+                'best_SSIM' : -np.inf,
+                'best_SSIM_it' : 0,
+                'best_SSIM_time' : 0
+            } for fm in frame_numbers
+        } for ds in downsample_factors
+    } for cams in camera_arrangements
+}
+del metrics['all_cameras'][1]
+
+has_all_frame = False
+for arr in camera_arrangements:
+    for ds in downsample_factors:
+        if arr == "all_cameras" and ds == 1:
+            continue
+        has_all_frame = (has_all_frame or (arr == "all_cameras" and ds == 2)) and (set(metrics[arr][ds].keys()) == set(frame_numbers))
+        if not has_all_frame:
+            print(f"{arr} {ds}")
+print(f"Has all frames: {has_all_frame}")
+    
+#print(metrics)
+# EXPERIMENTAL LOOP
 for arrangement_i, arrangement in enumerate(camera_arrangements):
-    print(f"Arrangement: {arrangement}")
     for downsample_i, downsample in enumerate(downsample_factors):
-        # print(f"Timing downsampling factor of {downsample}...")
-        config_dict = generate_config_dict(sample_name=sample_name, gpu_number=gpu_number, downsample=downsample,
-                                        camera_set="custom", use_neptune=use_neptune,
-                                        custom_image_numbers=camera_arrangements[arrangement],
-                                        log_description=log_description, frame_number=frame_numbers[0],
-                                        run_args={"iters": iterations, "batch_size": 12, "num_depths": 32,
-                                                    "display_freq": display_freq})
+        if has_all_reconstructions and arrangement == "all_cameras" and downsample == 1:
+            print("Skipping all cameras and downsampling factor 1 because we already have gold standards.")
+            continue 
+        try:
+            os.makedirs(f"{heightmaps_dir}/{arrangement}/{downsample}")
+            os.makedirs(f"{losses_dir}/{arrangement}/{downsample}")
+        except FileExistsError:
+            pass
+        is_gold_std = arrangement == 'all_cameras' and downsample == 1
+        config_dict = \
+            generate_config_dict(
+                sample_name=sample_name, gpu_number=gpu_number, downsample=downsample,
+                camera_set="custom", use_neptune=use_neptune,
+                custom_image_numbers=camera_arrangements[arrangement],
+                log_description=log_description, frame_number=frame_numbers[0],
+                run_args= {
+                    "iters": calib_iterations, 
+                    "batch_size": 12, 
+                    "num_depths": 32,
+                    "display_freq": display_freq
+                }
+            )
         run_manager = RunManager(config_dict)
-        setup_times[arrangement][downsample_i] = run_manager.setup_time
+        if arrangement == 'all_cameras' and downsample == 1:
+            metrics[arrangement][downsample] = {'setup_time' : run_manager.setup_time}
+        else:
+            metrics[arrangement][downsample]['setup_time'] = run_manager.setup_time
         #print(run_manager.setup_time)
         indices = run_manager.dataset.full_crops[20]
 
@@ -107,39 +183,19 @@ for arrangement_i, arrangement in enumerate(camera_arrangements):
         # follow prompts in the terminal to adjust # iterations used
         # or to manually move on to the next frame
         run_args = config_dict["run_args"]
-        if downsample == 1 and arrangement == 'all_cameras': 
-            gold_standards = {fm : None for fm in frame_numbers}
-            metrics = {
-                fm : {
-                    cams : {
-                        ds : {
-                            'RMSE' : np.zeros(iterations), 
-                            'SSIM' : np.zeros(iterations),
-                            'duration' : np.zeros(iterations), 
-                            'bestimage_RMSE' : None,
-                            'bestimage_SSIM' : None,
-                            'best_RMSE' : np.inf,
-                            'best_RMSE_it' : 0,
-                            'best_RMSE_time' : 0,
-                            'best_SSIM' : -np.inf,
-                            'best_SSIM_it' : 0,
-                            'best_SSIM_time' : 0
-                        } for ds in downsample_factors
-                    } for cams in camera_arrangements
-                } for fm in frame_numbers
-            } 
-            for fm in frame_numbers:
-               del metrics[fm]['all_cameras'][1]
-            #input(metrics)
 
         for frame_number_i, frame_number in enumerate(frame_numbers):
+            if frame_number_i == 0:
+                metrics[arrangement][downsample]['final_frames'] = []
+
+            print(f"FRAME #{frame_number} | Downsampling {downsample} | Arrangement {arrangement}")
             #print("")
             #print("enter 'iters: {number}' to adjust # iterations for the NEXT frame")
             #print("OR enter 'continue' to move on to the next frame")
             #print("")
 
             # useful to update description for each frame
-            print(f"Camera Arrangements: {camera_arrangements[arrangement]}")
+            #print(f"Camera Arrangements: {camera_arrangements[arrangement]}")
             run_manager.config_dict["log_description"] = f"frame {frame_number} " + log_description
             run_manager.swap_frames(frame_number)
             
@@ -148,11 +204,12 @@ for arrangement_i, arrangement in enumerate(camera_arrangements):
             # disable = True removes the progress bar 
             duration = 0
             for i in tqdm(range(run_args["iters"])):
-                done = i == run_args["iters"] - 1
+                niter = calib_iterations if frame_number == frame_numbers[0] or (arrangement == "all_cameras" and downsample == 1) else iterations
+                done = i == (niter - 1)
                 display = i % run_args["display_freq"] == 0
                 log = done or display 
-                
                 _, _, _, outputs, time_in_ms, loss_values = run_manager.run_epoch(i, log and use_neptune)
+                
                 duration += time_in_ms
                 losses.append(float(loss_values["total"]))
                 
@@ -174,22 +231,18 @@ for arrangement_i, arrangement in enumerate(camera_arrangements):
                 # this block can be edited to save/log in another way
                 # this simply displays some outputs with matplotlib
                 heightmap = outputs["depth"].detach().cpu().squeeze().numpy()
-
-                if done:
-                    print("Storing gold standard!")
-                    if downsample == 1 and arrangement == 'all_cameras': 
-                        gold_standards[frame_number] = heightmap[sx:ex, sy:ey]
-                    times[arrangement][downsample_i, frame_number_i] = duration / 1000
-
-                # TODO change this to linear interpolation
-                #expanded_heightmap = heightmap.repeat_interleave(downsample, dim = 0).repeat_interleave(downsample, dim = 1)[
-                #    sx:ex, sy:ey
-                #]
                 expanded_heightmap = zoom(heightmap, zoom=downsample, order=1)[sx:ex, sy:ey]  # order=1 means linear interpolation   
                 reference = run_manager.reference_image.cpu().squeeze()[startx:endx, starty:endy]
 
-                if not (downsample == 1 and arrangement == 'all_cameras'):
-                    curr_metrics = metrics[frame_number][arrangement][downsample]
+                if downsample == 1 and arrangement == 'all_cameras':
+                    if done:
+                        print("Storing gold standard!")
+                        gold_standards[frame_number] = heightmap[sx:ex, sy:ey]
+                else:
+                    metrics_for_iter = metrics[arrangement][downsample]
+                    if done:    
+                        metrics_for_iter['final_frames'].append(expanded_heightmap)
+                    curr_metrics = metrics_for_iter[frame_number]
                     rmse = float(np.sqrt(
                         np.mean(
                             np.square(
@@ -233,23 +286,25 @@ for arrangement_i, arrangement in enumerate(camera_arrangements):
                     ax2.set_title(f"Reconstructed")
                     ax1.set_title(f"Gold Standard")
                     ax0.set_title(f"Reference Image")
-                    plt.savefig(f"plots/{time_at_start}/heightmap/{sample_name}/{frame_number}_ds{downsample}_{arrangement}.png")
-                    #plt.show()
-
+                    plt.savefig(f"{heightmaps_dir}/{arrangement}/{downsample}/{frame_number}.png")
+                    plt.close('all')
+                    
                     plt.figure()
                     plt.plot(losses)
                     plt.title(f"losses, frame {frame_number}, downsampling {downsample}, {arrangement}")
                     plt.xlabel("iteration")
                     plt.ylabel("loss")
-                    plt.savefig(f"plots/{time_at_start}/losses/{sample_name}/{frame_number}_ds{downsample}_{arrangement}.png")
-                    #plt.show()
-
-            # print(f"Execution runtime for frame: {frame_duration}s")
-        #print(f"Total runtime for downsample factor {downsample}: {np.sum(times[downsample_i, :])}s")
-        #print(f"Runtime/Frame for downsample factor {downsample}: {np.mean(times[downsample_i, :])}s +/- {np.std(times[downsample_i, :])}")
+                    plt.savefig(f"{losses_dir}/{arrangement}/{downsample}/{frame_number}.png")
+                    plt.close('all')
+                
+                if done:
+                    break
         print(metrics)
-np.save(f"timings/video-reconstruction_{sample_name}.npy", times)
-np.save(f"timings/setup_{sample_name}.npy", setup_times)
-
-with open('metrics.pkl', 'wb') as f:
+        
+with open(f'data/metrics-{args.iters}.pkl', 'wb') as f:
     pickle.dump(metrics, f)
+    
+if not has_all_reconstructions:
+    with open('data/gold-standards.pkl', 'wb') as f:
+        pickle.dump(gold_standards, f)
+    

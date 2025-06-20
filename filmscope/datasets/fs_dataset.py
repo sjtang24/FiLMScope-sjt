@@ -324,7 +324,7 @@ class FSDataset(Dataset):
         # this is  new, and a lot of this is copy paste
         # should condense into a function that can be used here and in the __init__ func
         if isinstance(self.full_crops, dict):
-            print(self.images.shape)
+            #print(self.images.shape)
             for im_num_i, image_number in enumerate(self.image_numbers.tolist()):
                 startx, endx, starty, endy = self.full_crops[image_number]
 
