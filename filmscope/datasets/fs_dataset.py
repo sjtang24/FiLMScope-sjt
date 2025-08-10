@@ -30,6 +30,7 @@ class FSDataset(Dataset):
         crop_centers=None,  # dictionary with image numbers as keys, (x, y) point in image coordinates as values
         crop_size=None,  # length 2 tuple with normalized crop size (i.e. values betwteen 0 and 1)
         ensure_grayscale=True,
+        noise=[0, 0], # mean, std 
     ):
         self.is_single_image = len(load_dictionary(calibration_filename)["crop_indices"]) != 0
         self.calibration_filename = calibration_filename
@@ -41,7 +42,7 @@ class FSDataset(Dataset):
         self.image_filename = image_filename
         self.downsample = downsample
         self.frame_number = frame_number
-        images = self.prep_images()
+        images = self.prep_images(noise)
 
         # prepare the necessary maps
         # for legacy reasons these start out as numpy arrays
@@ -281,7 +282,7 @@ class FSDataset(Dataset):
             "masks": self.masks, 
         }
 
-    def prep_images(self):
+    def prep_images(self, noise=[0,0]):
         if self.is_single_image:
             if self.downsample != 1:
                 raise ValueError("Only set up for downsample=1 with single images")
@@ -310,6 +311,9 @@ class FSDataset(Dataset):
                         
             images[i] = torch.asarray(image.copy())
 
+        noise = torch.rand_like(images) * noise[0] + noise[1]
+        images = images + noise 
+        images = torch.clamp(images, 0, 255)
         return images
 
     # this could easily be modified to allow for switching image sets

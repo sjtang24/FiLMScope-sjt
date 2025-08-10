@@ -12,10 +12,12 @@ import time
 
 class RunManager:
     def __init__(self, config_dict, guide_map=None,
-                 prev_model=None, global_mask=None, run_name=None):
+                 prev_model=None, global_mask=None, run_name=None,
+                 noise=[0,0]):
         self.run_name = run_name
         self.config_dict = config_dict
         self.run_args = config_dict["run_args"]
+        self.rectify = self.run_args["rectify_perspective"]
         self.info = config_dict["sample_info"]
         self.loss_w = config_dict["loss_weights"]
 
@@ -44,6 +46,7 @@ class RunManager:
             crop_size=self.info["crop_size"],
             height_est=self.info["height_est"],
             blank_filename=blank_filename,
+            noise=noise,
         )
 
         self.image_loader = DataLoader(
@@ -112,6 +115,7 @@ class RunManager:
                     self.run_args["batch_size"],
                     self.depth_values,
                     get_squared=True,
+                    rectify_perspective=self.rectify
                 )
             else:
                 volume, volume_sq = get_height_aware_vol_from_dataset(
@@ -119,12 +123,18 @@ class RunManager:
                     self.run_args["batch_size"],
                     self.depth_values,
                     self.guide_map,
-                    get_squared=True
+                    get_squared=True,
+                    rectify_perspective=self.rectify
                 )
             num_views = len(self.dataset)
-            self.volume_variance = volume_sq.div_(num_views).sub_(
+            volume_variance = volume_sq.div_(num_views).sub_(
                 volume.div_(num_views).pow_(2)
             )
+
+            if not self.run_args["use_variance"]:
+                self.volume = volume
+            else:
+                self.volume = volume_variance
 
     def setup_logger(self): 
         self.logger = NeptuneLogManager(
@@ -152,7 +162,7 @@ class RunManager:
     def run_forward_model(self):
         outputs = {}
         outputs["depth"]= self.model(
-            self.volume_variance, 
+            self.volume, 
             self.depth_values,
         )
 
@@ -180,6 +190,7 @@ class RunManager:
             self.reference_image,
             sample["masks"],
             global_mask=self.global_mask,
+            rectify_perspective=self.rectify, 
         )
 
         for key, item in losses.items():

@@ -16,7 +16,7 @@ path_to_data = "D:/20241226_fluoro_chicken"
 
 
 # path location of calibration dataset
-image_folder = path_to_data  # + "/calibration_data"
+image_folder = path_to_data  + "/calibration_data"
 
 # set "current_plane" and "current_camera_index" to values other than 0
 # to start with plane/image other than the first one
