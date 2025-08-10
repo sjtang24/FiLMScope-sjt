@@ -1,6 +1,7 @@
 # location where data was downloaded
 import os
 path_to_data = "/home/stevent/FiLMScope-sjt/FiLMScope_paper_data"
+alt_path = "/data2/steven"
 # path_to_data = "/media/Friday/Temporary/Clare/20241211_calibration_tests"
 # path_to_data = "/media/Friday/Temporary/Clare/20241226_fluoro_chicken"
 # path_to_data = "/media/Friday/Temporary/Clare/20250116_macaque_brain"

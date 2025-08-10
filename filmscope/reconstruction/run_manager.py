@@ -101,9 +101,11 @@ class RunManager:
         if config_dict["use_neptune"]:
             self.setup_logger()
 
-
+    # runs once per frame (see how long that takes, in comparison to duration of iteration)
+    # can we do this in one batch?
     def prepare_volume(self):
         with torch.no_grad():
+            # if its working under a low-resolution guide map
             if self.guide_map is None:
                 volume, volume_sq = get_ss_volume_from_dataset(
                     self.dataset,
