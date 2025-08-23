@@ -1,7 +1,6 @@
 import pickle
 import matplotlib.pyplot as plt
 from matplotlib.gridspec import GridSpec
-import plotly.graph_objects as go
 import numpy as np
 from pathlib import Path 
 from skimage.metrics import structural_similarity
@@ -15,13 +14,15 @@ from filmscope.config import path_to_data
 from filmscope.recon_util import get_sample_information
 import xarray as xr
 
+DEFAULT_VIDEO = "skull_tool_video"
 parser = argparse.ArgumentParser(description="Plot reconstruction with parameters.")
 parser.add_argument("--calc", action='store_true', help="Recalculate Metric")
 parser.add_argument("--ssim", action='store_true', help="Use SSIM")
 parser.add_argument("--rmse", action='store_true', help="Use RMSE")
-#parser.add_argument("--filter", type=str, default = "gauss", help="Use a filter? ('gauss' or 'none')")
-parser.add_argument("--dataset", type=str, default = "metrics_dataset.csv", help="Dataset to graph")
-parser.add_argument("--sample_name", type=str, default = "knuckle_video")
+parser.add_argument("--skip", type = int, help="how many frames to skip?", default=0)
+#parser.add_argument("--filter", type=str, default = "gauss", help="Use a filter? ('gauss' or 'none')") delegated to 'reconstruct.py'
+parser.add_argument("--dataset", type=str, default = f"{DEFAULT_VIDEO}_metrics_dataset.csv", help="Dataset to graph")
+parser.add_argument("--sample_name", type=str, default = DEFAULT_VIDEO)
 args = parser.parse_args()
 
 if args.ssim == args.rmse:
@@ -34,34 +35,34 @@ def numeric_sort_key(path):
     # Extract all numbers in the filename and return them as a tuple of ints
     return int(path.stem)
 
+recon_path = f"recon/{args.sample_name}/"
 downsampling_factors = [1, 2, 4, 8]
 arrangements = ['all_cameras', '4x4 grid', 'wide_sparse', 'narrow_sparse', '2x2 grid']
-iters = [1, 2, 4, 8, 10, 20, 30]
-width = (5, 5)
+iters = [1, 5, 10]
 
 if args.calc:
     # extract the gold standards from file
-    gold_standards = np.load("/data2/steven/goldstandard.npy", mmap_mode='r') 
+    gold_standards = np.load(f"{recon_path}goldstandard.npy", mmap_mode='r') 
     records = []
 
     for arrangement in arrangements:
         for downsampling in downsampling_factors:
             for iterations in iters:
                 print(f"Gathering data for {arrangement}, x{downsampling} (iterations = {iterations})")
-                filename = f"/data2/steven/{iterations}_{'-'.join(arrangement.split(' '))}_{downsampling}.npy"
+                filename = f"{recon_path}{iterations}_{'-'.join(arrangement.split(' '))}_{downsampling}.npy"
                 reconstruction = np.load(filename, mmap_mode='r')
                 num_frames, _, _ = reconstruction.shape
                 for frame in tqdm(range(num_frames)):
                     gold = gold_standards[frame, :, :]
                     recon = reconstruction[frame, :, :]
 
-                    gold = median_filter(gold, width)
+                    """gold = median_filter(gold, width)
 
                     duration = 0
                     filt_start = time.perf_counter()
                     recon = median_filter(recon, width)
                     filt_end = time.perf_counter()
-                    duration = filt_end - filt_start
+                    duration = filt_end - filt_start"""
 
                     records.append(
                         {
@@ -81,12 +82,12 @@ if args.calc:
                                     )
                                 )
                             ),
-                            'filter_time' : duration # already in s 
+                            #'filter_time' : duration # already in s 
                         }
                     )
                 #print(records)
     metrics_dataset = pd.DataFrame(records)
-    metrics_dataset.to_csv('metrics_dataset.csv', index=False)
+    metrics_dataset.to_csv(f'{args.sample_name}_metrics_dataset.csv', index=False)
 else:
     metrics_dataset = pd.read_csv(args.dataset)
 
@@ -117,9 +118,9 @@ def plot_data(metric):
             if not df.empty:
                 for stop_after, stop_after_df in df.groupby("iterations"):
                     ax.plot(
-                        stop_after_df['frame_number'],
-                        stop_after_df[metric],
-                        linewidth = 0.5,
+                        stop_after_df['frame_number'][args.skip:],
+                        stop_after_df[metric][args.skip:],
+                        linewidth = 1,
                         label=f"{stop_after}"
                     )
                 ax.set_title(f"{arrangement}, ×{downsampling}", fontsize=10)
@@ -149,8 +150,8 @@ def plot_data(metric):
 
     fig.set_constrained_layout(False)
     plt.tight_layout(rect=[0.02, 0.02, 0.98, 0.93])
-    fig.suptitle(f"{metric.upper()} Change Over Frames", fontsize=16, y=0.98)
-    plt.show()
+    fig.suptitle(f"{metric.upper()} Change Over Frames ({args.sample_name}, skipping {args.skip} frame(s))", fontsize=16, y=0.98)
+    plt.savefig(f"{args.sample_name}_{metric_choice}_skip{args.skip}-graph.png")
 
 
 plot_data(metric_choice)

@@ -7,16 +7,26 @@ from matplotlib.gridspec import GridSpec
 from matplotlib.animation import FuncAnimation
 from scipy.ndimage import gaussian_filter, median_filter
 
-filepath = '/data2/steven/goldstandard.npy'
-filepath2 = '/data2/steven/1_4x4-grid_1.npy'
-run_info_file = 'data/iter-4.pkl'
+def normalize(img, ep = 1e-8):
+    return (img - img.min()) / (img.max() - img.min() + ep)
 
-with open("data/iter-gold-standards.pkl", 'rb') as gold_standards_info_file:
+sample_name = 'eye_video'
+recon_info_path = 'data/'
+recon_path = 'recon/'
+config = '10_4x4-grid_4'
+#filepath = recon_path + sample_name + '/goldstandard.npy'
+filepath_gs = recon_path + sample_name + '/goldstandard.npy'
+filepath_recon = recon_path + sample_name + f'/{config}.npy'
+run_info_file = recon_info_path + '/iter-1.pkl'
+
+with open(run_info_file, 'rb') as gold_standards_info_file:
     gold_standards_info_data = pickle.load(gold_standards_info_file)
-gold_standards_info = gold_standards_info_data[1]['all_cameras']
+#print(gold_standards_info_data[1].keys())
+gold_standards_info = gold_standards_info_data[1]['4x4 grid']
 
-gs_frames = np.load(filepath, mmap_mode = 'r')
-recon_frames = np.load(filepath2, mmap_mode = 'r')
+gs_frames = np.load(filepath_gs, mmap_mode = 'r')
+#print(gs_frames[:, :, :])
+#recon_frames = np.load(filepath2, mmap_mode = 'r')
 nframes, _, _ = gs_frames.shape
 
 fig = plt.figure(figsize = (15, 4))
@@ -35,25 +45,31 @@ ax2.set_title("Reconstructed")
 ax1.set_title("Gold Standard")
 ax0.set_title("Reference Image")
 
-sigma = (5,5)
+recon_frames = np.load(filepath_recon, mmap_mode = 'r')
 
-rec_img = ax2.imshow(recon_frames[0, :, :], cmap = 'turbo')
-gs_img = ax1.imshow(gs_frames[0, :, :], cmap = 'turbo')
+print(recon_frames.shape)
+print(gs_frames.shape)
+print(gold_standards_info[0]['reference'].shape)
+#print(gold_standards_info[0])
+rec_img = ax2.imshow(normalize(recon_frames[0, :, :]), cmap = 'turbo', vmin=0, vmax=1)
+gs_img = ax1.imshow(normalize(gs_frames[0, :, :]), cmap = 'turbo', vmin=0, vmax=1)
 ref_img = ax0.imshow(gold_standards_info[0]['reference'], cmap = 'gray')
 
 fig.suptitle(f"Iteration 0")
 
 def update(frame):
-    rec = recon_frames[frame, :, :]
+    rec = normalize(recon_frames[frame, :, :])
     ref = gold_standards_info[frame]['reference']
-    gs = gs_frames[frame, :, :]
+    gs = normalize(gs_frames[frame, :, :])
 
     ref_img.set_data(ref)
     gs_img.set_data(gs)
     rec_img.set_data(rec)
 
-    fig.suptitle(f"Iteration {frame}")
-    return [ref_img, gs_img, rec_img]
 
-ani = FuncAnimation(fig, update, frames=np.arange(0, nframes), interval=25, blit=False, repeat=True)
-plt.show()
+    fig.suptitle(f"Iteration {frame}")
+    return [gs_img, gs_img, rec_img]
+
+ani = FuncAnimation(fig, update, frames=np.arange(0, nframes), interval=1, blit=False, repeat=True)
+#plt.show()
+ani.save(f'{config}.gif', writer='pillow', fps=5)

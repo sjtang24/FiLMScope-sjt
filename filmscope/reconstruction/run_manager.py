@@ -35,6 +35,7 @@ class RunManager:
             blank_filename = path_to_data + self.info["blank_filename"]
         else:
             blank_filename = None
+
         self.dataset = FSDataset(
             path_to_data + self.info["image_filename"],
             path_to_data + self.info["calibration_filename"],
@@ -70,7 +71,7 @@ class RunManager:
 
         self.prepare_volume()
         self.dataset.to_device("cuda")
-
+        torch.cuda.synchronize()
         self.setup_time = time.perf_counter() - self.setup_time # startup time
         ##### TIME TO SETUP VOLUMES #####
 

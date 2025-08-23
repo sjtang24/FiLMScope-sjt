@@ -87,7 +87,6 @@ def generate_config_dict(gpu_number, sample_name, use_neptune=False,
     if custom_image_numbers is not None:
         camera_set = "custom"
         cam_num_sets["custom"] = custom_image_numbers
-
     # put the settings into the sample info/wherever they should be 
     sample_info = get_sample_information(sample_name) 
     sample_info["downsample"] = downsample

@@ -46,11 +46,68 @@ import select
 from matplotlib import use
 from matplotlib import pyplot as plt
 from matplotlib.gridspec import GridSpec
+import torch.nn.functional as F
 import numpy as np
 import torch 
+import torch.nn as nn 
 from datetime import datetime
 import pickle
 import argparse
+#from scipy.ndimage import gaussian_filter, median_filter
+from filters_pt import median_filter
+import copy
+
+# CONFIGURATION INFORMATION FOR VIDEO DATASETS
+DOWNSAMPLING_MULTIPLIER = {
+    'skull_tool_video' : 1,
+    'knuckle_video' : 1,
+    'eye_video' : 3
+}
+
+CROPPING_FACTOR = {
+    'skull_tool_video' : 8,
+    'knuckle_video' : 64,
+    'eye_video' : 64
+}
+
+FILTER = {
+    'median' : (median_filter, (5, 5), nn.Unfold(kernel_size=(5, 5))),
+    'none' : (None, None, None)
+}
+
+camera_arrangements = {
+    'all_cameras' : np.arange(0, 48).tolist(),                                     
+    'wide_sparse' : [6, 10, 20, 30, 34],                                          
+    'narrow_sparse' : [14, 16, 20, 26, 28],                                        
+    '2x2 grid' : [20, 21, 26, 27],                                                
+    '4x4 grid' : [13, 14, 15, 16, 19, 20, 21, 22, 25, 26, 27, 28, 31, 32, 33, 34] 
+}
+
+camera_arrangements_gold = {
+    'all_cameras' : np.arange(0, 48).tolist()
+}
+
+CAMERA_ARRANGEMENTS = {
+    'skull_tool_video' : copy.deepcopy(camera_arrangements),
+    'knuckle_video' : copy.deepcopy(camera_arrangements),
+    'eye_video' : copy.deepcopy(camera_arrangements)
+}
+del CAMERA_ARRANGEMENTS['eye_video']['all_cameras']
+CAMERA_ARRANGEMENTS['eye_video']['wide_sparse'] = [13, 16, 21, 31, 34] 
+CAMERA_ARRANGEMENTS['eye_video']['narrow_sparse'] = [14, 16, 21, 26, 28]
+#input(CAMERA_ARRANGEMENTS)
+
+CAMERA_ARRANGEMENTS_GOLD = {
+    'skull_tool_video' : {'all_cameras' : camera_arrangements['all_cameras']},
+    'knuckle_video' : {'all_cameras' : camera_arrangements['all_cameras']}, 
+    'eye_video' : {'4x4 grid' : camera_arrangements['4x4 grid']}
+}
+
+REF_IMG = {
+    'skull_tool_video' : 20,
+    'knuckle_video' : 20,
+    'eye_video' : 21
+}
 
 def save_pickle(data, args):
     if args.only_gold_standards:
@@ -60,6 +117,7 @@ def save_pickle(data, args):
         with open(f'data/iter-{args.iters}.pkl', 'wb') as f:
             pickle.dump(data, f)
 
+reconpath = 'recon/'
 try: 
     os.makedirs('data')
 except FileExistsError:
@@ -70,9 +128,13 @@ parser = argparse.ArgumentParser(description="Run reconstruction with parameters
 parser.add_argument("--iters", type=int, help="Number of Iterations to run after calibration step")
 parser.add_argument("--only_gold_standards", action="store_true", help="generate only gold standards")
 parser.add_argument("--gpu", type=int, help="gpu number (0-4, incl.)", default = -1)
-parser.add_argument("--sample_name", type=str, help = "name of the sample", default = "knuckle_video")
+parser.add_argument("--sample_name", type=str, help = "name of the sample", default = "skull_tool_video")
 parser.add_argument("--save_iters", action="store_true", help="save every iteration")
 parser.add_argument("--save_final", action="store_true", help="save last iteration")
+parser.add_argument("--frame_end", type=int, help="Frame to end reconstruction (0...MAX_FRAMES)")
+parser.add_argument("--frame_start", type=int, help="Frame to start reconstructions (0, ..., MAX_FRAMES - 1)")
+parser.add_argument("--filter", type=str, help = "Type of Filter ('gaussian', 'median', or 'none')", default = 'none')
+parser.add_argument("--every10", action="store_true", help = "Skip 9 frames so we process frames 0, 10, 20, ..., n")
 args = parser.parse_args()
 
 ## select sample name and gpu number
@@ -80,7 +142,7 @@ sample_name = args.sample_name
 gpu_number = ""
 
 # check if script running on correct sample 
-if args.sample_name in ["knuckle_video"]:
+if args.sample_name in ["knuckle_video", "skull_tool_video", "eye_video"]:
     sample_name = args.sample_name
 else:
     print("Sample does not exist!")
@@ -97,8 +159,32 @@ else:
 
 # determine frame numbers for this video 
 image_filename = get_sample_information(sample_name)["image_filename"]
-dset = xr.open_dataset(alt_path if arg.sample_name == "skull_tool_video" else path_to_data + '/' + image_filename)
+dset = xr.open_dataset(path_to_data + image_filename)
 frame_numbers = dset.frame_number.data
+
+if args.frame_start is None:
+    args.frame_start = 0
+if args.frame_end is None:
+    args.frame_end = frame_numbers[-1]
+
+MIN_FRAMES_NUMBER = np.min(frame_numbers)
+MAX_FRAMES_NUMBER = np.max(frame_numbers)
+if not (MIN_FRAMES_NUMBER <= args.frame_start < args.frame_end <= MAX_FRAMES_NUMBER):
+    print(f"Bad frame start and end parameters! Must be between {MIN_FRAMES_NUMBER} and {MAX_FRAMES_NUMBER}")
+    sys.exit()
+
+print(f"Viewing Frame #{args.frame_start} to Frame #{args.frame_end}")
+
+filter_func, filter_width, filter_unfold = None, None, None  
+if args.filter not in ['gaussian', 'median', 'none']:
+    print("Filter is invalid! Must be Gaussian or Median Filter or 'none.'")
+elif args.filter not in FILTER:
+    print("Filter specified is not implemented!")
+    sys.exit()
+else:
+    filter_func, filter_width, filter_unfold = FILTER[args.filter]
+    print(f"Using {args.filter.upper()} filtering with width (standard deviation or size) {filter_width}")
+
 dset = None
 use_neptune = False
 log_description = ""
@@ -119,63 +205,29 @@ if args.save_iters == args.save_final:
     sys.exit()
 
 if not args.only_gold_standards:
-    downsample_factors = [1]
-    camera_arrangements = {
-        'all_cameras' : np.arange(0, 48).tolist(),
-        'wide_sparse' : [6, 10, 20, 30, 34],
-        'narrow_sparse' : [14, 16, 20, 26, 28],
-        '2x2 grid' : [20, 21, 26, 27],
-        '4x4 grid' : [13, 14, 15, 16, 19, 20, 21, 22, 25, 26, 27, 28, 31, 32, 33, 34]
-    }
+    downsample_factors = [8, 4, 2, 1]
+    camera_arrangements = CAMERA_ARRANGEMENTS[args.sample_name]
     iterations = args.iters
 else:
     print("Generating gold standards (with all cameras and no downsampling). Ignoring iterations argument")
     downsample_factors = [1]
-    camera_arrangements = {
-        'all_cameras' : np.arange(0, 48).tolist()
-    }
-
-#time_at_start = datetime.today().strftime('%Y-%m-%d_%H:%M:%S')
-
-# INITIALIZATIONS 
-#downsample_factors = [downsample]
-#times = {key : np.zeros((len(downsample_factors), frame_numbers.size)) for key in camera_arrangements}
-#setup_times = {key : np.zeros(len(downsample_factors)) for key in camera_arrangements}
-# gold_standards = None
-# if not args.new_gold_standards:
-#     try:
-#         with open("data/gold-standards.pkl", 'rb') as gold_standards_file:
-#             gold_standards = pickle.load(gold_standards_file)
-#     except Exception as e:
-#         print("Failed to load existing gold standards:", e)
-#         gold_standards = None 
-
-# is_dict = isinstance(gold_standards, dict)
-# has_all_frames = is_dict and set(gold_standards.keys()) == set(frame_numbers)
-# has_all_reconstructions = has_all_frames and all(v is not None for v in gold_standards.values())
-
-# if args.new_gold_standards or not has_all_reconstructions:
-#     print("Gold standards have not all been reconstructed. Restarting...")
-#     gold_standards = {fm : None for fm in frame_numbers}
-# else:
-#     print("Using existing gold standards...")
- 
-#print(metrics)
+    camera_arrangements = CAMERA_ARRANGEMENTS_GOLD[args.sample_name]
+#input(camera_arrangements)
 
 startx, starty, endx, endy = None, None, None, None
 sx, ex = None, None 
 sy, ey = None, None 
-cropping = 64 
+cropping = CROPPING_FACTOR[sample_name] # 64 = knuckle video, 4 = skull_tool_video 
 iteration_data = None 
 
 real_order_frames = np.argsort(frame_numbers)
-
+#print(real_order_frames)
 # EXPERIMENTAL LOOP
 for downsample_i, downsample in enumerate(downsample_factors):
     for arrangement_i, arrangement in enumerate(camera_arrangements):
         config_dict = \
             generate_config_dict(
-                sample_name=sample_name, gpu_number=gpu_number, downsample=downsample,
+                sample_name=sample_name, gpu_number=gpu_number, downsample=downsample * DOWNSAMPLING_MULTIPLIER[sample_name],
                 camera_set="custom", use_neptune=use_neptune,
                 custom_image_numbers=camera_arrangements[arrangement],
                 log_description=log_description, frame_number=frame_numbers[0],
@@ -187,7 +239,6 @@ for downsample_i, downsample in enumerate(downsample_factors):
                 }
             )
         run_manager = RunManager(config_dict)
-        print(run_manager.setup_time)
         
         # perform reconstruction
         # if convergence happens quickly for some frames, 
@@ -196,7 +247,7 @@ for downsample_i, downsample in enumerate(downsample_factors):
         run_args = config_dict["run_args"]
         
         if arrangement_i == 0 and downsample_i == 0:
-            indices = run_manager.dataset.full_crops[20]
+            indices = run_manager.dataset.full_crops[REF_IMG[sample_name]]
 
             # I assume here that negative indices denote padding so we start with -startx or -starty,
             # and we multiply by the downsample to get the cropping information for the upsampled images 
@@ -206,8 +257,8 @@ for downsample_i, downsample in enumerate(downsample_factors):
                 for crop_coords in indices
             ])
 
-            sx, sy = startx * downsample + cropping, starty * downsample + cropping
-            ex, ey = endx * downsample - cropping, endy * downsample - cropping 
+            sx, sy = startx * downsample * DOWNSAMPLING_MULTIPLIER[sample_name] + cropping, starty * downsample * DOWNSAMPLING_MULTIPLIER[sample_name] + cropping
+            ex, ey = endx * downsample * DOWNSAMPLING_MULTIPLIER[sample_name] - cropping, endy * downsample * DOWNSAMPLING_MULTIPLIER[sample_name] - cropping 
             
             leny = ey - sy
             lenx = ex - sx
@@ -220,6 +271,7 @@ for downsample_i, downsample in enumerate(downsample_factors):
                     } for cams in camera_arrangements
                 } for ds in downsample_factors
             }
+
         print(f"Downsampling {downsample} | Arrangement {arrangement}")
         iteration_data[downsample][arrangement]['setup_time'] = run_manager.setup_time
         print(f"Setup: {iteration_data[downsample][arrangement]['setup_time']}")
@@ -232,9 +284,14 @@ for downsample_i, downsample in enumerate(downsample_factors):
             if prev_actual_frame is not None and prev_actual_frame == actual_frame:
                 continue # skip repeated frame
             prev_actual_frame = actual_frame
-            frame_number = actual_frame
-            if frame_number < 450:
+            if actual_frame < args.frame_start:
+                continue # skip frames before start
+            if actual_frame > args.frame_end:
+                break # stop it for this configuration
+            if args.every10 and actual_frame % 10 != 0:
                 continue 
+            frame_number = actual_frame
+        
             print(f"Downsampling {downsample} | Arrangement {arrangement} || FRAME #{frame_number}")
             #print("")
             #print("enter 'iters: {number}' to adjust # iterations for the NEXT frame")
@@ -246,7 +303,7 @@ for downsample_i, downsample in enumerate(downsample_factors):
             run_manager.config_dict["log_description"] = f"frame {frame_number} " + log_description
             run_manager.swap_frames(frame_number)
             
-            niter = calib_iterations if frame_number == frame_numbers[0] or (arrangement == "all_cameras" and downsample == 1 and args.only_gold_standards) else iterations
+            niter = calib_iterations if frame_number == args.frame_start or (arrangement == "all_cameras" and downsample == 1 and args.only_gold_standards) else iterations
             #print(f"Starting frame {frame_number}")
             # disable = True removes the progress bar 
             duration = 0
@@ -260,130 +317,81 @@ for downsample_i, downsample in enumerate(downsample_factors):
                 log = done or display 
                 _, _, _, outputs, time_in_ms, loss_values = run_manager.run_epoch(i, log and use_neptune)
                 
-                duration += time_in_ms                
-                heightmap = outputs["depth"].detach().cpu().squeeze().numpy()
-                expanded_heightmap = zoom(heightmap, zoom=downsample, order=1)[sx:ex, sy:ey]  # order=1 means linear interpolation   
-                reference = run_manager.reference_image.cpu().squeeze()[sx:ex, sy:ey]
-                config_data['reference'] = reference
-                iter_reconstruct[i, :, :] = expanded_heightmap
+                duration += time_in_ms # in ms
+
+                #print(f'{sx}:{ex} | {sy}:{ey}')
+
+                # time how long it takes to postprocessing steps, including upsampling and filtering 
+                start_post_proc_timer = time.perf_counter()             
+                heightmap = outputs["depth"].detach().contiguous()
+                heightmap_upsampled = F.interpolate(
+                    heightmap.unsqueeze(0), #.cpu().squeeze().numpy(),
+                    scale_factor=downsample * DOWNSAMPLING_MULTIPLIER[sample_name], 
+                    mode='bilinear', 
+                    align_corners=True
+                ) #.squeeze().squeeze() # H x W
+                reconstruction = heightmap_upsampled[:, :, sx:ex, sy:ey]  # order=1 means linear interpolation 
+                """reconstruction = zoom(
+                    heightmap, zoom=downsample * DOWNSAMPLING_MULTIPLIER[sample_name], order=1
+                )"""
+
+               # print(reconstruction.shape)
+
+                if filter_func is not None:
+                    reconstruction = filter_func(reconstruction, filter_width, filter_unfold)
+                torch.cuda.synchronize()
+                end_post_proc_timer = time.perf_counter()  # in seconds
+                duration += (1000 * (end_post_proc_timer - start_post_proc_timer))
+                # end timing 
+                reconstruction = reconstruction.squeeze(0).squeeze(0).cpu().numpy()
+                iter_reconstruct[i, :, :] = reconstruction 
                 config_data['duration'][i] = duration / 1000
                 config_data['losses'][i] = float(loss_values["total"])
-
-                # save periodically (every 10 frame for gold standards, or after all data for non-gold-standards)
+                
             
-                # check here for terminal inputs to move on to next frame if desired
-                # or adjust the number of iterations being used
-                # if select.select([sys.stdin], [], [], 0.1)[0]:
-                #     user_input = sys.stdin.readline().strip()
+                # save information 
 
-                #     command_parts = user_input.split(": ", 1)
-                #     if len(command_parts) == 2:
-                #         command, value = command_parts
-                #         if command.lower() == "iters":
-                #             print(f"switching to {value} iters on next frame")
-                #             run_args["iters"] = int(value)
-                #     elif user_input.lower() == "continue":
-                #         print("moving on to next frame...")
-                #         break
-
-                # this block can be edited to save/log in another way
-                # this simply displays some outputs with matplotlib
+            reference = run_manager.reference_image.cpu().squeeze()[sx:ex, sy:ey]
+            config_data['reference'] = reference
             recon_frames[frame_number_i, :, :] = iter_reconstruct[-1, :, :]
+
+            """recon = recon_frames[frame_number_i, :, :]
+            n_recon = (recon - recon.min()) / (recon.max() - recon.min())
+                
+            plt.figure()
+            plt.imshow((reconstruction - reconstruction.min()) / (reconstruction.max() - reconstruction.min()), 
+                        cmap = "turbo", vmin = 0, vmax = 1)
+            plt.axis('off')     # hides axes for this subplot
+            plt.savefig('recon.png')"""
+            frame_number_i += 1
+            #print(f"Frame #{frame_number_i}")
+            #input(recon_frames[frame_number_i, :, :])
             if args.save_iters:
                 if not args.only_gold_standards:
-                    datapath = f'/data2/steven/{args.iters}/{arrangement}/{downsample}'
+                    datapath = reconpath + sample_name + f'/{args.iters}/{arrangement}/{downsample}'
                 else:
-                    datapath = f"/data2/steven/goldstandard"
+                    datapath = reconpath + sample_name + "/goldstandard"
                 try: 
-                    os.makedirs(datapath)
+                    os.makedirs(datapath + sample_name)
                 except FileExistsError:
                     pass
                 np.save(f'{datapath}/{frame_number}.npy', iter_reconstruct)
-            frame_number_i += 1
+        #print(recon_frames)
         # frames loop ends
         if args.save_final:
-            datapath = '/data2/steven/'
             if not args.only_gold_standards:
-                datapath = f'/data2/steven/{args.iters}_{"-".join(arrangement.split(" "))}_{downsample}.npy'
+                datapath = reconpath + sample_name + f'/{args.iters}_{"-".join(arrangement.split(" "))}_{downsample}.npy'
             else:
-                datapath = '/data2/steven/goldstandard.npy'
-            np.save(datapath, recon_frames) 
+                datapath = reconpath + sample_name + '/goldstandard.npy'
+            try: 
+                os.makedirs(reconpath + sample_name)
+            except FileExistsError:
+                pass
+            #input(recon_frames[args.frame_start:args.frame_end, :, :].shape)
+            #input(recon_frames[args.frame_start:args.frame_end, :, :])
+            np.save(datapath, recon_frames[args.frame_start:args.frame_end, :, :]) 
     # downsampling loop ends
 # camera arrangement loop ends
 
 save_pickle(iteration_data, args)
 # Final File Upload
-
-
-
-
-"""if downsample == 1 and arrangement == 'all_cameras':
-if done:
-print("Storing gold standard!")
-gold_standards[frame_number] = heightmap[sx:ex, sy:ey]
-else:
-metrics_for_iter = metrics[arrangement][downsample]
-if done:    
-metrics_for_iter['final_frames'].append(expanded_heightmap)
-curr_metrics = metrics_for_iter[frame_number]
-rmse = float(np.sqrt(
-np.mean(
-np.square(
-    expanded_heightmap - gold_standards[frame_number]
-)
-)
-))        
-mssim = structural_similarity(
-expanded_heightmap, gold_standards[frame_number], full=False
-)
-
-curr_metrics['RMSE'][i] = rmse
-curr_metrics['SSIM'][i] = mssim
-curr_metrics['duration'][i] = duration / 1000
-if curr_metrics['best_RMSE'] > rmse:
-curr_metrics['best_RMSE'] = rmse
-curr_metrics['bestimage_RMSE'] = expanded_heightmap
-curr_metrics['best_RMSE_it'] = i
-curr_metrics['best_RMSE_time'] = curr_metrics['duration'][i]
-if curr_metrics['best_SSIM'] < mssim:
-curr_metrics['best_SSIM'] = mssim
-curr_metrics['bestimage_SSIM'] = expanded_heightmap
-curr_metrics['best_SSIM_it'] = i
-curr_metrics['best_SSIM_time'] = curr_metrics['duration'][i]
-
-if log and not use_neptune:                
-fig = plt.figure()
-width_ratios = [1, 1, 1]
-gs = GridSpec(1, 3, width_ratios=width_ratios)
-ax0 = fig.add_subplot(gs[0])
-ax1 = fig.add_subplot(gs[1])
-ax2 = fig.add_subplot(gs[2])
-ax0.axis('off')
-ax1.axis('off')
-ax2.axis('off')
-
-ax2.imshow(expanded_heightmap, cmap = 'turbo')
-if gold_standards is not None and gold_standards[frame_number] is not None:
-ax1.imshow(gold_standards[frame_number], cmap='turbo')
-ax0.imshow(reference, cmap='gray')
-ax2.set_title(f"Reconstructed")
-ax1.set_title(f"Gold Standard")
-ax0.set_title(f"Reference Image")
-plt.savefig(f"{heightmaps_dir}/{arrangement}/{downsample}/{frame_number}.png")
-plt.close('all')
-
-plt.figure()
-plt.plot(losses)
-plt.title(f"losses, frame {frame_number}, downsampling {downsample}, {arrangement}")
-plt.xlabel("iteration")
-plt.ylabel("loss")
-plt.savefig(f"{losses_dir}/{arrangement}/{downsample}/{frame_number}.png")
-plt.close('all')
-
-print(metrics)
-
-
-if not has_all_reconstructions:
-with open('data/gold-standards.pkl', 'wb') as f:
-pickle.dump(gold_standards, f)
-"""

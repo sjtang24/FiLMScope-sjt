@@ -17,34 +17,45 @@ import sys
 from scipy.ndimage import gaussian_filter, median_filter
 
 parser = argparse.ArgumentParser(description="Plot reconstruction with parameters.")
-parser.add_argument("--downsampling", type=int, help="Downsampling Factor (1, 2, 4, 8)", default = 1)
+parser.add_argument("--downsampling", type=int, help="Downsampling Factor (1, 2, 4, 8)", default = 4)
 parser.add_argument("--arrangement", type=str, help = "Camera Arrangement ('2x2-grid', '4x4-grid', 'all_cameras', 'narrow_sparse', 'wide_sparse')", default = '4x4-grid')
 parser.add_argument("--iters", type=int, help="Number of iterations after calibration (10, 20, 30)", default = 1)
 parser.add_argument("--rmse", action='store_true')
+parser.add_argument("--gold", action="store_true")
 parser.add_argument("--ssim", action='store_true')
 parser.add_argument("--surface", action='store_true')
 parser.add_argument("--heightmap", action='store_true')
+parser.add_argument("--sample", type=str, default="skull_tool_video")
+parser.add_argument("--start", type=int, default=400)
+parser.add_argument("--end", type=int, default=440)
 args = parser.parse_args()
 
 if args.downsampling not in [1, 2, 4, 8]:
     sys.exit("Downsampling factor must be any of [1, 2, 4, 8]!")
 if args.arrangement not in ['2x2-grid', '4x4-grid', 'all_cameras', 'narrow_sparse', 'wide_sparse']:
     sys.exit("Camera Arrangement must be any of ['2x2-grid', '4x4-grid', 'all_cameras', 'narrow_sparse', 'wide_sparse']!")
-if args.iters not in [1, 2, 4, 8, 10, 20, 30]:
+if args.iters not in [1, 5, 10]:
     sys.exit("Number of iterations after calibration step must be any of [10, 20, 30]")
 if args.rmse == args.ssim:
     sys.exit("Must choose a single metric (ssim or rmse).")
 if args.surface == args.heightmap:
     sys.exit("Must choose a single representation ('surface' or 'heightmap')")
-
+if args.gold and args.heightmap:
+    sys.exit("To see the gold standard, it's more helpful to see the surface!")
 metric = 'ssim' if args.ssim else 'rmse'
-
+gs_pkl_path = 'data/'
+recon_path = f'recon/{args.sample}/'
 print(f"Animating reconstructions for {args.arrangement}, x{args.downsampling}, {args.iters} iterations...")
-with open("data/iter-gold-standards.pkl", 'rb') as gold_standards_info_file:
+with open(gs_pkl_path + "iter-gold-standards.pkl", 'rb') as gold_standards_info_file:
     gold_standards_info_data = pickle.load(gold_standards_info_file)
 gold_standards_info = gold_standards_info_data[1]['all_cameras']
+gold_standards_info = {
+    k - args.start : v
+    for k, v in gold_standards_info_data[1]['all_cameras'].items() 
+    if not isinstance(k, str) and k < args.end
+}
 
-df = pd.read_csv("metrics_dataset.csv")
+df = pd.read_csv(f"{args.sample}_metrics_dataset.csv")
 df_to_consider = df[
     (df['downsampling'] == args.downsampling) & \
     (df['arrangement'] == ' '.join(args.arrangement.split('-'))) & \
@@ -55,36 +66,51 @@ def numeric_sort_key(path):
     # Extract all numbers in the filename and return them as a tuple of ints
     return int(path.stem)
 
-gold_standards = np.load(f"/data2/steven/goldstandard.npy", mmap_mode = 'r')
-reconstructions = np.load(f"/data2/steven/{args.iters}_{args.arrangement}_{args.downsampling}.npy", mmap_mode = 'r')
+gold_standards = np.load(f"{recon_path}/goldstandard.npy", mmap_mode = 'r')
+reconstructions = np.load(f"{recon_path}/{args.iters}_{args.arrangement}_{args.downsampling}.npy", mmap_mode = 'r')
 frame_num, img_w, img_h = reconstructions.shape 
 size = (5, 5)
+#input(gold_standards_info)
+
+def normalize(img, ep = 1e-8):
+    vmin = img.min()
+    vmax = img.max()
+    return (img - vmin) / (vmax - vmin + ep)
 
 if args.surface:
+    if args.gold:
+        reconstructions = gold_standards
+
     x = np.arange(img_w)
     y = np.arange(img_h)
     x, y = np.meshgrid(x, y)
 
     fig = plt.figure()
     ax = fig.add_subplot(111, projection='3d')
+    ax.view_init(elev=50, azim=160)
+
     surf = ax.plot_surface(
         -y, -x, reconstructions[0, :, :], cmap='Blues', 
-        linewidth=0, edgecolor ='none', alpha = 0.75
+        linewidth=0, edgecolor ='none', alpha = 0.5
     )
         
     def update_surface(frame):
         ax.clear()
-        ax.set_zlim(np.min(reconstructions[frame, :, :]), \
-                    np.max(reconstructions[frame, :, :]))    
+        """ax.set_zlim(np.min(reconstructions[frame, :, :]), \
+                    np.max(reconstructions[frame, :, :])) """   
         ax.set_title(f'{frame}/{frame_num}')
         surf = ax.plot_surface(
-            -y, -x, median_filter(reconstructions[frame, :, :], size), 
+            -y, -x, reconstructions[frame, :, :], 
             cmap='Blues', linewidth=0, edgecolor='none', alpha = 0.85
         )
         return surf 
 
     ani = FuncAnimation(fig, update_surface, frames=frame_num, interval=100, blit=False)
-    plt.show()
+    if not args.gold:
+        ani.save(f'{args.downsampling}-{args.iters}-{args.arrangement}-surface.gif', writer='pillow', fps=10)
+    else:
+        ani.save(f'goldstds-surface.gif', writer='pillow', fps=10)
+    #plt.show()
 else: 
     fig = plt.figure(figsize = (15, 4))
 
@@ -110,18 +136,18 @@ else:
     """rec_img = ax2.imshow(median_filter(reconstructions[0, :, :], size), cmap = 'turbo')
     gs_img = ax1.imshow(median_filter(gold_standards[0, :, :], size), cmap = 'turbo')
     ref_img = ax0.imshow(median_filter(gold_standards_info[0]['reference'], size), cmap = 'gray')"""
-    rec_img = ax2.imshow(median_filter(reconstructions[0, :, :], size), cmap = 'turbo')
-    gs_img = ax1.imshow(median_filter(gold_standards[0, :, :], size), cmap = 'turbo')
-
-    ref = gold_standards_info[0]['reference']
-    min_gs = gold_standards_info[0]['reference'].min()
-    max_gs = gold_standards_info[0]['reference'].max()
-    scaled = (ref - min_gs) / (max_gs - min_gs)
-    ref_img = ax0.imshow(scaled, cmap = 'gray')
+    n_recon = normalize(reconstructions[0, :, :])
+    rec_img = ax2.imshow(n_recon, cmap = 'turbo', vmin = 0, vmax = 1)
+    
+    n_gs = normalize(gold_standards[0, :, :])
+    gs_img = ax1.imshow(n_gs, cmap = 'turbo', vmin = 0, vmax = 1)
+    
+    n_ref = normalize(gold_standards_info[0]['reference'])
+    ref_img = ax0.imshow(n_ref, cmap = 'gray', vmin = 0, vmax = 1)
 
     fig.suptitle(f"Iteration 0/{frame_num} ({args.arrangement}, x{args.downsampling} w/ {args.iters} iterations)")
 
-    ax3.set_xlim(0, 600)
+    ax3.set_xlim(args.start, args.end)
     ax3.set_ylim(df_to_consider[metric].min(), df_to_consider[metric].max())
 
     def update(frame):
@@ -129,18 +155,23 @@ else:
         ref = gold_standards_info[frame]['reference']
         gs = gold_standards[frame, :, :]
 
-        ref = (ref - ref.min()) / (ref.max() - ref.min())
-        ref_img.set_data(ref)
-        gs_img.set_data(gs)
-        rec_img.set_data(rec)
+        n_recon = normalize(rec)
+        n_gs = normalize(gs)
+        n_ref = normalize(ref)
+
+        ref_img.set_data(n_ref)
+        gs_img.set_data(n_gs)
+        rec_img.set_data(n_recon)
 
         ssim_line.set_data(
-            df_to_consider['frame_number'][:(frame+1)],
+            df_to_consider['frame_number'][:(frame+1)] + args.start,
             df_to_consider[metric][:(frame+1)]
         )
 
         fig.suptitle(f"Iteration {frame}/{frame_num} ({args.arrangement}, x{args.downsampling} w/ {args.iters} iterations)")
         return [ref_img, gs_img, rec_img, ssim_line]
 
-    ani = FuncAnimation(fig, update, frames=range(frame_num + 1), interval=10, blit=False, repeat=True)
-    plt.show()
+    ani = FuncAnimation(fig, update, frames=range(frame_num), interval=250, blit=False, repeat=True)
+    ani.save(f'{args.downsampling}-{args.iters}-{args.arrangement}-heightmap.gif', writer='pillow', fps=10)
+
+    #plt.show()

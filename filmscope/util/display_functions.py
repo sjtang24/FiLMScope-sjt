@@ -73,7 +73,7 @@ def display_with_points(image, points, radius=40, color=(255, 0, 0), thickness=2
 
     return image
 
-def play_video(frames_array, fps=30):
+def play_video(frames_array, fps=5):
     """
     Display a 4D NumPy array (video) as a video with a given frames per second (fps).
     """

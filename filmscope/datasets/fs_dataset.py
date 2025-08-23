@@ -58,7 +58,7 @@ class FSDataset(Dataset):
         # identify the reference camera, which should be provided in every batch
         # and get the extra needed map
         reference_camera_num = load_dictionary(calibration_filename)["reference_camera"]
-
+        print(reference_camera_num)
         # and load the additional needed map for the reference camera
         ref_camera_shift_slopes = generate_normalized_shift_maps(
             calibration_filename, type="shift_slope",
@@ -128,6 +128,7 @@ class FSDataset(Dataset):
         else:
             self.full_crops = {}
             self.map_crops = {}
+            #input(crop_centers)
             ref_center = crop_centers[reference_camera_num]
 
             # figure out the reference crop
