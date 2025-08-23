@@ -10,3 +10,4 @@ FiLMScope_paper_data
 *.pkl
 *.csv
 *.zip
+logs/

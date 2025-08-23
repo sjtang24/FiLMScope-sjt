@@ -67,7 +67,7 @@ DOWNSAMPLING_MULTIPLIER = {
 CROPPING_FACTOR = {
     'skull_tool_video' : 8,
     'knuckle_video' : 64,
-    'eye_video' : 64
+    'eye_video' : 128
 }
 
 FILTER = {
@@ -205,7 +205,7 @@ if args.save_iters == args.save_final:
     sys.exit()
 
 if not args.only_gold_standards:
-    downsample_factors = [8, 4, 2, 1]
+    downsample_factors = [1, 2, 4, 8]
     camera_arrangements = CAMERA_ARRANGEMENTS[args.sample_name]
     iterations = args.iters
 else:
@@ -262,6 +262,7 @@ for downsample_i, downsample in enumerate(downsample_factors):
             
             leny = ey - sy
             lenx = ex - sx
+
             iteration_data = {
                 ds : {
                     cams : {
@@ -330,7 +331,6 @@ for downsample_i, downsample in enumerate(downsample_factors):
                     mode='bilinear', 
                     align_corners=True
                 ) #.squeeze().squeeze() # H x W
-                reconstruction = heightmap_upsampled[:, :, sx:ex, sy:ey]  # order=1 means linear interpolation 
                 """reconstruction = zoom(
                     heightmap, zoom=downsample * DOWNSAMPLING_MULTIPLIER[sample_name], order=1
                 )"""
@@ -338,7 +338,8 @@ for downsample_i, downsample in enumerate(downsample_factors):
                # print(reconstruction.shape)
 
                 if filter_func is not None:
-                    reconstruction = filter_func(reconstruction, filter_width, filter_unfold)
+                    reconstruction = filter_func(heightmap_upsampled, filter_width, filter_unfold)
+                reconstruction = reconstruction[:, :, sx:ex, sy:ey]  # order=1 means linear interpolation 
                 torch.cuda.synchronize()
                 end_post_proc_timer = time.perf_counter()  # in seconds
                 duration += (1000 * (end_post_proc_timer - start_post_proc_timer))
@@ -355,14 +356,14 @@ for downsample_i, downsample in enumerate(downsample_factors):
             config_data['reference'] = reference
             recon_frames[frame_number_i, :, :] = iter_reconstruct[-1, :, :]
 
-            """recon = recon_frames[frame_number_i, :, :]
+            recon = recon_frames[frame_number_i, :, :]
             n_recon = (recon - recon.min()) / (recon.max() - recon.min())
                 
             plt.figure()
             plt.imshow((reconstruction - reconstruction.min()) / (reconstruction.max() - reconstruction.min()), 
                         cmap = "turbo", vmin = 0, vmax = 1)
             plt.axis('off')     # hides axes for this subplot
-            plt.savefig('recon.png')"""
+            plt.savefig('recon.png')
             frame_number_i += 1
             #print(f"Frame #{frame_number_i}")
             #input(recon_frames[frame_number_i, :, :])

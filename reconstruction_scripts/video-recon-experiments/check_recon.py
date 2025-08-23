@@ -13,7 +13,7 @@ def normalize(img, ep = 1e-8):
 sample_name = 'eye_video'
 recon_info_path = 'data/'
 recon_path = 'recon/'
-config = '10_4x4-grid_4'
+config = '5_4x4-grid_4'
 #filepath = recon_path + sample_name + '/goldstandard.npy'
 filepath_gs = recon_path + sample_name + '/goldstandard.npy'
 filepath_recon = recon_path + sample_name + f'/{config}.npy'
@@ -47,9 +47,6 @@ ax0.set_title("Reference Image")
 
 recon_frames = np.load(filepath_recon, mmap_mode = 'r')
 
-print(recon_frames.shape)
-print(gs_frames.shape)
-print(gold_standards_info[0]['reference'].shape)
 #print(gold_standards_info[0])
 rec_img = ax2.imshow(normalize(recon_frames[0, :, :]), cmap = 'turbo', vmin=0, vmax=1)
 gs_img = ax1.imshow(normalize(gs_frames[0, :, :]), cmap = 'turbo', vmin=0, vmax=1)
