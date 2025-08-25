@@ -65,9 +65,9 @@ DOWNSAMPLING_MULTIPLIER = {
 }
 
 CROPPING_FACTOR = {
-    'skull_tool_video' : 8,
-    'knuckle_video' : 64,
-    'eye_video' : 128
+    'skull_tool_video' : (8, 8),
+    'knuckle_video' : (64, 64),
+    'eye_video' : (256, 256)
 }
 
 FILTER = {
@@ -205,7 +205,7 @@ if args.save_iters == args.save_final:
     sys.exit()
 
 if not args.only_gold_standards:
-    downsample_factors = [1, 2, 4, 8]
+    downsample_factors = [8, 4, 2, 1]
     camera_arrangements = CAMERA_ARRANGEMENTS[args.sample_name]
     iterations = args.iters
 else:
@@ -217,7 +217,7 @@ else:
 startx, starty, endx, endy = None, None, None, None
 sx, ex = None, None 
 sy, ey = None, None 
-cropping = CROPPING_FACTOR[sample_name] # 64 = knuckle video, 4 = skull_tool_video 
+cropping_x, cropping_y = CROPPING_FACTOR[sample_name] # 64 = knuckle video, 4 = skull_tool_video 
 iteration_data = None 
 
 real_order_frames = np.argsort(frame_numbers)
@@ -257,8 +257,8 @@ for downsample_i, downsample in enumerate(downsample_factors):
                 for crop_coords in indices
             ])
 
-            sx, sy = startx * downsample * DOWNSAMPLING_MULTIPLIER[sample_name] + cropping, starty * downsample * DOWNSAMPLING_MULTIPLIER[sample_name] + cropping
-            ex, ey = endx * downsample * DOWNSAMPLING_MULTIPLIER[sample_name] - cropping, endy * downsample * DOWNSAMPLING_MULTIPLIER[sample_name] - cropping 
+            sx, sy = startx * downsample * DOWNSAMPLING_MULTIPLIER[sample_name] + cropping_x, starty * downsample * DOWNSAMPLING_MULTIPLIER[sample_name] + cropping_y
+            ex, ey = endx * downsample * DOWNSAMPLING_MULTIPLIER[sample_name] - cropping_x, endy * downsample * DOWNSAMPLING_MULTIPLIER[sample_name] - cropping_y
             
             leny = ey - sy
             lenx = ex - sx
@@ -331,9 +331,7 @@ for downsample_i, downsample in enumerate(downsample_factors):
                     mode='bilinear', 
                     align_corners=True
                 ) #.squeeze().squeeze() # H x W
-                """reconstruction = zoom(
-                    heightmap, zoom=downsample * DOWNSAMPLING_MULTIPLIER[sample_name], order=1
-                )"""
+                
 
                # print(reconstruction.shape)
 
@@ -352,18 +350,42 @@ for downsample_i, downsample in enumerate(downsample_factors):
             
                 # save information 
 
-            reference = run_manager.reference_image.cpu().squeeze()[sx:ex, sy:ey]
+            reference = run_manager.reference_image.cpu().squeeze()
+            reference = zoom(
+                reference, zoom=downsample * DOWNSAMPLING_MULTIPLIER[sample_name], order=1
+            )[sx:ex, sy:ey]
+
             config_data['reference'] = reference
             recon_frames[frame_number_i, :, :] = iter_reconstruct[-1, :, :]
-
+            """
             recon = recon_frames[frame_number_i, :, :]
+
+            #print(reference.shape)
+            #print(recon.shape)
+
             n_recon = (recon - recon.min()) / (recon.max() - recon.min())
                 
-            plt.figure()
-            plt.imshow((reconstruction - reconstruction.min()) / (reconstruction.max() - reconstruction.min()), 
-                        cmap = "turbo", vmin = 0, vmax = 1)
-            plt.axis('off')     # hides axes for this subplot
-            plt.savefig('recon.png')
+            fig = plt.figure(figsize = (15, 4))
+
+            width_ratios = [1, 1]
+            gs = GridSpec(1, 2, width_ratios=width_ratios)
+            ax0 = fig.add_subplot(gs[0])
+            ax1 = fig.add_subplot(gs[1])
+
+            ax0.axis('off')
+            ax1.axis('off')
+
+            ax0.set_title("Reference Image")
+            ax1.set_title("Reconstruction")
+
+            ax0.imshow((recon - recon.min()) / (recon.max() - recon.min()), 
+                        cmap = 'turbo', vmin=0, vmax=1)
+            ax1.imshow((reference - reference.min()) / (reference.max() - reference.min()),
+                       cmap='gray', vmin=0, vmax=1)
+            ax0.axis('off')
+            ax1.axis('off')
+
+            plt.savefig('recon.png')"""
             frame_number_i += 1
             #print(f"Frame #{frame_number_i}")
             #input(recon_frames[frame_number_i, :, :])
@@ -390,7 +412,7 @@ for downsample_i, downsample in enumerate(downsample_factors):
                 pass
             #input(recon_frames[args.frame_start:args.frame_end, :, :].shape)
             #input(recon_frames[args.frame_start:args.frame_end, :, :])
-            np.save(datapath, recon_frames[args.frame_start:args.frame_end, :, :]) 
+            np.save(datapath, recon_frames) 
     # downsampling loop ends
 # camera arrangement loop ends
 

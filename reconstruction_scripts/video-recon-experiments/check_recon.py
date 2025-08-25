@@ -13,11 +13,11 @@ def normalize(img, ep = 1e-8):
 sample_name = 'eye_video'
 recon_info_path = 'data/'
 recon_path = 'recon/'
-config = '5_4x4-grid_4'
+config = '1_4x4-grid_4'
 #filepath = recon_path + sample_name + '/goldstandard.npy'
 filepath_gs = recon_path + sample_name + '/goldstandard.npy'
 filepath_recon = recon_path + sample_name + f'/{config}.npy'
-run_info_file = recon_info_path + '/iter-1.pkl'
+run_info_file = recon_info_path + sample_name + '/iter-1.pkl'
 
 with open(run_info_file, 'rb') as gold_standards_info_file:
     gold_standards_info_data = pickle.load(gold_standards_info_file)
