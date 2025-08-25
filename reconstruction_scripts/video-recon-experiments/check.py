@@ -3,7 +3,7 @@
 
 from filmscope.reconstruction import generate_config_dict, RunManager
 from filmscope.recon_util import get_sample_information
-from filmscope.config import path_to_data
+from filmscope.config import path_to_data, alt_path
 
 import xarray as xr
 import os
@@ -19,12 +19,11 @@ gpu_number = "0"
 os.environ["CUDA_VISIBLE_DEVICES"] = gpu_number
 
 # used for neptune logging only
-log_description = "shortened kncukle video recon"
+log_description = ""
 
 # determine frame numbers for this video 
 image_filename = get_sample_information(sample_name)["image_filename"]
-dset = xr.open_dataset(path_to_data + '/' + image_filename)
-print(dset)
+dset = xr.open_dataset(alt_path + '/' + image_filename)
 frame_numbers = dset.frame_number.data
 dset = None
 
@@ -42,11 +41,6 @@ run_manager = RunManager(config_dict)
 # or to manually move on to the next frame
 run_args = config_dict["run_args"]
 for frame_number in frame_numbers:
-    print("")
-    print(f"starting for frame {frame_number}")
-    print("enter 'iters: {number}' to adjust # iterations for the NEXT frame")
-    print("OR enter 'continue' to move on to the next frame")
-    print("")
 
     # useful to update description for each frame
     run_manager.config_dict["log_description"] = f"frame {frame_number} " + log_description
@@ -54,38 +48,20 @@ for frame_number in frame_numbers:
     
     losses = []
     for i in tqdm(range(run_args["iters"])):
-        log = (i == run_args["iters"] - 1) or (i % run_args["display_freq"] == 0)
-        _, _, _, outputs, loss_values = run_manager.run_epoch(i, log and use_neptune)
+        _, _, _, outputs, _, loss_values = run_manager.run_epoch(i, True)
         losses.append(float(loss_values["total"]))
-
-        # check here for terminal inputs to move on to next frame if desired
-        # or adjust the number of iterations being used
-        if select.select([sys.stdin], [], [], 0.1)[0]:
-            user_input = sys.stdin.readline().strip()
-
-            command_parts = user_input.split(": ", 1)
-            if len(command_parts) == 2:
-                command, value = command_parts
-                if command.lower() == "iters":
-                    print(f"switching to {value} iters on next frame")
-                    run_args["iters"] = int(value)
-            elif user_input.lower() == "continue":
-                print("moving on to next frame...")
-                break
 
         # this block can be edited to save/log in another way
         # this simply displays some outputs with matplotlib
-        if log and not use_neptune:
-            fig, (ax0, ax1) = plt.subplots(1, 2) 
-            ax1.imshow(outputs["depth"].detach().cpu().squeeze(), cmap='turbo')
-            ax0.imshow(run_manager.reference_image.cpu().squeeze(), cmap='gray')
-            ax1.set_title(f"height map, iteration {i}")
-            ax0.set_title(f"reference image, frame {frame_number}")
-            plt.show()
+        fig, (ax0, ax1) = plt.subplots(1, 2) 
+        recon = outputs["depth"].detach().cpu().squeeze()
+        vmin, vmax = recon.min(), recon.max()
+        reconfig = ax1.imshow(recon, cmap='turbo', vmin = vmin, vmax=vmax)
+        ax0.imshow(run_manager.reference_image.cpu().squeeze(), cmap='gray')
+        
+        cbar = plt.colorbar(reconfig, ax=ax1, orientation='horizontal')
+        cbar.set_label('Depth')
 
-            plt.figure()
-            plt.plot(losses)
-            plt.title(f"losses, frame {frame_number}")
-            plt.xlabel("iteration")
-            plt.ylabel("loss")
-            plt.show()
+        ax1.set_title(f"height map, iteration {i}")
+        ax0.set_title(f"reference image, frame {frame_number}")
+        plt.savefig("skull-video-recon.png")

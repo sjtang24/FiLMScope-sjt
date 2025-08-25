@@ -17,8 +17,9 @@ import sys
 from scipy.ndimage import gaussian_filter, median_filter
 
 parser = argparse.ArgumentParser(description="Plot reconstruction with parameters.")
-parser.add_argument("--downsampling", type=int, help="Downsampling Factor (1, 2, 4, 8)", default = 1)
-parser.add_argument("--arrangement", type=str, help = "Camera Arrangement ('2x2-grid', '4x4-grid', 'all_cameras', 'narrow_sparse', 'wide_sparse')", default = '4x4-grid')
+parser.add_argument("--gold", action="store_true")
+parser.add_argument("--downsampling", type=int, help="Downsampling Factor (1, 2, 4, 8)", default = 4)
+parser.add_argument("--arrangement", type=str, help = "Camera Arrangement ('2x2-grid', '4x4-grid', 'all_cameras', 'narrow_sparse', 'wide_sparse')", default = 'all_cameras')
 parser.add_argument("--iters", type=int, help="Number of iterations after calibration (10, 20, 30)", default = 1)
 parser.add_argument("--rmse", action='store_true')
 parser.add_argument("--ssim", action='store_true')
@@ -61,6 +62,7 @@ frame_num, img_w, img_h = reconstructions.shape
 size = (5, 5)
 
 if args.surface:
+    reconstructions = gold_standards if args.gold else reconstructions
     x = np.arange(img_w)
     y = np.arange(img_h)
     x, y = np.meshgrid(x, y)
@@ -142,5 +144,5 @@ else:
         fig.suptitle(f"Iteration {frame}/{frame_num} ({args.arrangement}, x{args.downsampling} w/ {args.iters} iterations)")
         return [ref_img, gs_img, rec_img, ssim_line]
 
-    ani = FuncAnimation(fig, update, frames=range(frame_num + 1), interval=10, blit=False, repeat=True)
+    ani = FuncAnimation(fig, update, frames=range(frame_num), interval=10, blit=False, repeat=True)
     plt.show()

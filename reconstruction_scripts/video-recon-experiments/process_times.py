@@ -55,7 +55,7 @@ if not os.path.exists('durations.csv'):
     duration_dataset.to_csv('durations.csv', index=False)
 else:
     metric = "rmse"
-    def plot_with_custom_labels(plot, title):
+    def plot_with_custom_labels(plot, title, filename):
         plot.fig.subplots_adjust(top=0.9)
         plot.fig.suptitle(
             title,
@@ -63,8 +63,9 @@ else:
             fontweight='bold'
         )
         plot.set_titles("{col_name}, x{row_name} Downsampling")
-        plt.show()
+        plot.savefig(filename)
 
+    AFTER = 200 
     # Load and merge datasets
     duration_dataset = pd.read_csv('durations.csv')
     metrics_dataset = pd.read_csv('metrics_dataset.csv')
@@ -78,20 +79,20 @@ else:
     combined = duration_dataset.merge(metrics_dataset_renamed, how='left', on=factors)
     combined.fillna({'ssim': 1, 'rmse': 0, 'filter_time': 0}, inplace=True)
     combined['total_duration'] = combined['duration'] + combined['filter_time']
-    combined = combined[combined['frame_number'] >= 0]
+    combined = combined[combined['frame_number'] >= AFTER]
     combined_metrics = combined.groupby(['downsampling', 'arrangement', 'stop_after'])[[metric, 'duration']].mean().reset_index()
     combined_metrics.to_csv('combined.csv', index=False)
 
     # Appearance maps
     stopafter_cmap = {
         'gold-standards': 'black',
-        '1': 'red',
-        '2': 'blue',
+        '10': 'red',
+        #'20': 'blue',
+        #'30': 'green',
+        '1': 'blue',
+        #'2': 'purple',
         '4': 'green',
-        '8': 'orange',
-        '10': 'purple',
-        '20': 'cyan',
-        '30': 'magenta'
+        #'8': 'magenta'
     }
 
     arrangement_mmap = {
@@ -129,16 +130,16 @@ else:
     plt.figure(figsize=(8, 6))
 
     for (ds, arr, stop), group in combined_metrics.groupby(['downsampling', 'arrangement', 'stop_after']):
-        plt.scatter(
-            group['duration'],
-            group[metric],
-            label=f'{arr}, x{ds} ({stop})',
-            marker=arrangement_mmap.get(arr, 'o'),
-            color=stopafter_cmap.get(stop, 'grey'),
-            alpha=ds_alphamap.get(str(ds), 0.5),
-            edgecolors='none'
-        )
-
+        if stop not in ['2', '8', '20', '30']:
+            plt.scatter(
+                group['duration'],
+                group[metric],
+                label=f'{arr}, x{ds} ({stop})',
+                marker=arrangement_mmap.get(arr, 'o'),
+                color=stopafter_cmap.get(stop, 'grey'),
+                alpha=ds_alphamap.get(str(ds), 0.5),
+                edgecolors='none'
+            )
     plt.xscale('log')
     plt.xlabel('Duration (in log seconds)')
     plt.ylabel(metric)
@@ -154,7 +155,7 @@ else:
     legend3 = plt.legend(handles=stopafter_legend, title='Downsampling', loc='upper right', bbox_to_anchor=(0.55, 1))
 
     plt.tight_layout()
-    plt.show()
+    plt.savefig(f"plots/avg-duration-rmse-{AFTER}-server.png")
 
     # Boxplots
     for filt in [None, 0]:
@@ -164,12 +165,16 @@ else:
         
         boxplots = sb.catplot(
             x="stop_after", y="duration", row="downsampling", col="arrangement",
-            data=duration_dataset_filt, kind="box", sharey=False, sharex=False, 
+            data=duration_dataset_filt[duration_dataset['frame_number'].notna()], kind="box", sharey=False, sharex=False, 
             height=2, aspect=1.5
         )
         
         incl = 'including' if filt is None else 'excluding'
-        plot_with_custom_labels(boxplots, f'Durations (sec) for Various Configurations ({incl} calibration)')
+        plot_with_custom_labels(
+            boxplots, 
+            f'Durations (sec) for Various Configurations ({incl} warmup steps)',
+            f"plots/{incl}-durations-og.png"
+        )
 
         barplot = sb.catplot(
             x="stop_after", y="duration", row="downsampling", col="arrangement",
@@ -177,5 +182,7 @@ else:
             height=2, aspect=1.5
         )
         
-        plot_with_custom_labels(barplot, f'Setup Times for Various Configurations')
+        plot_with_custom_labels(barplot, f'Setup Times for Various Configurations', 
+            "plots/setup-times-og.png"
+        )
 

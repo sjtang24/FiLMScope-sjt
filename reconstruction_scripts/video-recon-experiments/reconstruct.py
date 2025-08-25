@@ -60,6 +60,7 @@ def save_pickle(data, args):
         with open(f'data/iter-{args.iters}.pkl', 'wb') as f:
             pickle.dump(data, f)
 
+reconpath = 'recon/'
 try: 
     os.makedirs('data')
 except FileExistsError:
@@ -291,9 +292,9 @@ for downsample_i, downsample in enumerate(downsample_factors):
             recon_frames[frame_number_i, :, :] = iter_reconstruct[-1, :, :]
             if args.save_iters:
                 if not args.only_gold_standards:
-                    datapath = f'/data2/steven/{args.iters}/{arrangement}/{downsample}'
+                    datapath = reconpath + f'/{args.iters}/{arrangement}/{downsample}'
                 else:
-                    datapath = f"/data2/steven/goldstandard"
+                    datapath = reconpath + "goldstandard"
                 try: 
                     os.makedirs(datapath)
                 except FileExistsError:
@@ -302,11 +303,10 @@ for downsample_i, downsample in enumerate(downsample_factors):
             frame_number_i += 1
         # frames loop ends
         if args.save_final:
-            datapath = '/data2/steven/'
             if not args.only_gold_standards:
-                datapath = f'/data2/steven/{args.iters}_{"-".join(arrangement.split(" "))}_{downsample}.npy'
+                datapath = reconpath + f'{args.iters}_{"-".join(arrangement.split(" "))}_{downsample}.npy'
             else:
-                datapath = '/data2/steven/goldstandard.npy'
+                datapath = reconpath + 'goldstandard.npy'
             np.save(datapath, recon_frames) 
     # downsampling loop ends
 # camera arrangement loop ends

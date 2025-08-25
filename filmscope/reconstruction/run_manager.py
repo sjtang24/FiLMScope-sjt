@@ -1,7 +1,7 @@
 from filmscope.datasets import FSDataset
 from filmscope.models import VolumeConvNet
 from filmscope.losses import UnSupLoss
-from filmscope.config import path_to_data
+from filmscope.config import path_to_data, alt_path
 from filmscope.recon_util import (tocuda, get_ss_volume_from_dataset,
                                   get_height_aware_vol_from_dataset)
 from .log_manager import NeptuneLogManager
@@ -21,6 +21,10 @@ class RunManager:
         self.info = config_dict["sample_info"]
         self.loss_w = config_dict["loss_weights"]
 
+        # TODO: hardcoded skull_video (to work in /data2/...)
+        if self.info["sample_name"] in ['skull_tool_video']:
+            path_to_data = alt_path
+            
         ##### TIME TO SETUP VOLUMES #####
         self.guide_map = guide_map
         if self.guide_map is not None: 

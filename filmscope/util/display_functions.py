@@ -73,28 +73,33 @@ def display_with_points(image, points, radius=40, color=(255, 0, 0), thickness=2
 
     return image
 
-def play_video(frames_array, fps=30):
+def play_video(frames_array, depth_values, fps=1):
     """
     Display a 4D NumPy array (video) as a video with a given frames per second (fps).
     """
     num_frames = frames_array.shape[0]
-    
+
     # Iterate over frames and display them
     fig = plt.figure()
     canvas = plt.imshow(frames_array[0])
     plt.clim(np.min(frames_array), np.max(frames_array))
     plt.colorbar()
     plt.axis('off')
+
     for i in range(num_frames):
         start_time = time.time() 
         canvas.set_data(frames_array[i])
-        #fig.canvas.draw()
-        #plt.axis('off')
+        
+        # Add a title showing the frame number
+        plt.title(f"Frame {i + 1} / {num_frames} ({depth_values[i]}mm)", fontsize=14)
+        
         display(plt.gcf())
         clear_output(wait=True)
+        
         passed_time = time.time() - start_time 
         remaining_time = 1 / fps - passed_time
         time.sleep(max(remaining_time, 0))  # Control playback speed
+
 
 # TODO: right now this is hardcoded for our expected 6x8 layout
 def get_preview_image(image_filename, blank_filename=None, downsample=5, border_size=10,
