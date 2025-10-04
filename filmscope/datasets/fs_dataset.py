@@ -47,13 +47,15 @@ class FSDataset(Dataset):
         self.downsample = downsample
         self.frame_number = frame_number
         
-        prep_start = time.time()
+        #torch.cuda.synchronize()
+        #prep_start = time.perf_counter()
         images = self.prep_images(noise)
-        torch.cuda.synchronize()
-        prep_end = time.time()
-        timing_dict['swap_frames_info']['image-prep'] = [prep_end - prep_start]
+        #torch.cuda.synchronize()
+        #prep_end = time.perf_counter()
+        #timing_dict['swap_frames_info']['image-prep'] = [prep_end - prep_start]
 
-        start_cropping = time.time()
+        #torch.cuda.synchronize()
+        #start_cropping = time.perf_counter()
         # prepare the necessary maps
         # for legacy reasons these start out as numpy arrays
         # instead of torch tensors
@@ -248,9 +250,9 @@ class FSDataset(Dataset):
             inv_inter_camera_maps = crop_iis_maps
 
         self.images = images.permute([0, 3, 1, 2]).to(torch.float32)
-        torch.cuda.synchronize()
-        end_cropping = time.time()
-        self.timing_dict['swap_frames_info']['image-crop'] = [end_cropping - start_cropping]
+        #torch.cuda.synchronize()
+        #end_cropping = time.perf_counter()
+        #self.timing_dict['swap_frames_info']['image-crop'] = [end_cropping - start_cropping]
         self.warped_shift_slope_maps = warped_shift_slope_maps
         self.inv_inter_camera_maps = inv_inter_camera_maps
         self.reference_camera = reference_camera_num
@@ -302,7 +304,8 @@ class FSDataset(Dataset):
                 'copy' : [] 
             } 
 
-        start_load = time.perf_counter()
+        #torch.cuda.synchronize()
+        #start_load = time.perf_counter()
         if self.sample is None:
             if self.is_single_image:
                 if self.downsample != 1:
@@ -319,6 +322,7 @@ class FSDataset(Dataset):
                     #ensure_grayscale=self.ensure_grayscale
                 )
         else:
+            # proceeds here
             images_dict = load_image_set(
                 images = self.sample,
                 image_numbers=self.image_numbers.tolist(),
@@ -326,11 +330,12 @@ class FSDataset(Dataset):
                 frame_number=self.frame_number,
                 blank_filename=self.blank_filename
             )
-        torch.cuda.synchronize()
-        end_load = time.perf_counter()
-        self.timing_dict['prep_info']['load'].append(end_load - start_load)
+        #torch.cuda.synchronize()
+        #end_load = time.perf_counter()
+        #self.timing_dict['prep_info']['load'].append(end_load - start_load)
 
-        start_copy = time.perf_counter()
+        #torch.cuda.synchronize()
+        #start_copy = time.perf_counter()
         images = None
         for i, (image_num, image) in enumerate(images_dict.items()):
             #print(image_num)
@@ -347,9 +352,9 @@ class FSDataset(Dataset):
         noise = torch.rand_like(images) * noise[0] + noise[1]
         images = images + noise 
         images = torch.clamp(images, 0, 255)
-        torch.cuda.synchronize()
-        end_copy = time.perf_counter()
-        self.timing_dict['prep_info']['copy'].append(end_copy - start_copy)
+        #torch.cuda.synchronize()
+        #end_copy = time.perf_counter()
+        #self.timing_dict['prep_info']['copy'].append(end_copy - start_copy)
         return images
 
     # this could easily be modified to allow for switching image sets
@@ -360,17 +365,19 @@ class FSDataset(Dataset):
         self.sample = sample_image
         self.frame_number = frame_number
 
-        start_prep_img = time.perf_counter()
+        #torch.cuda.synchronize()
+        #start_prep_img = time.perf_counter()
         images = self.prep_images()
-        torch.cuda.synchronize()
-        end_prep_img = time.perf_counter()
-        self.timing_dict['swap_frames_info']['image-prep'].append(end_prep_img - start_prep_img)
+        #torch.cuda.synchronize()
+        #end_prep_img = time.perf_counter()
+        #self.timing_dict['swap_frames_info']['image-prep'].append(end_prep_img - start_prep_img)
         
         # 2024/06/19
         # this is  new, and a lot of this is copy paste
         # should condense into a function that can be used here and in the __init__ func
         if isinstance(self.full_crops, dict):
-            start_crop = time.perf_counter()
+            #torch.cuda.synchronize()
+            #start_crop = time.perf_counter()
             for i, image_number in enumerate(self.image_numbers.tolist()):
                 startx, endx, starty, endy = self.full_crops[image_number]
 
@@ -390,9 +397,9 @@ class FSDataset(Dataset):
 
                 self.images[i, :, startx2 - startx:endx, starty2 - starty:endy] = (
                     images[i, startx2:endx2, starty2:endy2].permute([2, 0, 1]))
-            torch.cuda.synchronize()
-            end_crop = time.perf_counter()
-            self.timing_dict['swap_frames_info']['image-crop'].append(end_crop - start_crop)
+            #torch.cuda.synchronize()
+            #end_crop = time.perf_counter()
+            #self.timing_dict['swap_frames_info']['image-crop'].append(end_crop - start_crop)
             return
 
         # crop

@@ -70,7 +70,8 @@ class RunManager:
         else:
             image_filename = None 
 
-        start_load = time.perf_counter()
+        #torch.cuda.synchronize()
+        #start_load = time.perf_counter()
         self.dataset = FSDataset(
             self.timing_dict,
             calibration_file, #path_to_data + self.info["calibration_filename"],
@@ -84,11 +85,12 @@ class RunManager:
             height_est=self.info["height_est"],
             blank_filename=blank_filename,
         )
-        torch.cuda.synchronize()
-        end_load = time.perf_counter()
-        self.timing_dict['setup_inner']['create-dataset'] = [end_load - start_load]
+        #torch.cuda.synchronize()
+        #end_load = time.perf_counter()
+        #self.timing_dict['setup_inner']['create-dataset'] = [end_load - start_load]
 
-        start_dler = time.perf_counter()
+        #torch.cuda.synchronize()
+        #start_dler = time.perf_counter()
         self.image_loader = DataLoader(
             self.dataset,
             self.run_args["batch_size"],
@@ -97,11 +99,12 @@ class RunManager:
             drop_last=self.run_args["drop_last"],
             pin_memory=True
         )
-        torch.cuda.synchronize()
-        end_dler = time.perf_counter()
-        self.timing_dict['setup_inner']['batching'] = [end_dler - start_dler]
+        #torch.cuda.synchronize()
+        #end_dler = time.perf_counter()
+        #self.timing_dict['setup_inner']['batching'] = [end_dler - start_dler]
 
-        start_transfer = time.perf_counter()
+        #torch.cuda.synchronize()
+        #start_transfer = time.perf_counter()
         # prepare other things needed throughout reconstruction
         self.reference_image = self.dataset.reference_image.cuda()
         self.reference_shift_slopes = self.dataset.ref_camera_shift_slopes.cuda()
@@ -110,22 +113,24 @@ class RunManager:
                 self.info["depth_range"][1],
                 self.run_args["num_depths"], dtype=torch.float32)
         self.depth_values = tocuda(self.depth_values)
-        torch.cuda.synchronize()
-        end_transfer = time.perf_counter()
-        transfer_duration = end_transfer - start_transfer
+        #torch.cuda.synchronize()
+        #end_transfer = time.perf_counter()
+        #transfer_duration = end_transfer - start_transfer
 
-        start_prepvolume = time.perf_counter()
+        #torch.cuda.synchronize()
+        #start_prepvolume = time.perf_counter()
         self.prepare_volume()
-        torch.cuda.synchronize()
-        end_prepvolume = time.perf_counter()
-        self.timing_dict['setup_inner']['prep-volume'] = end_prepvolume - start_prepvolume
+        #torch.cuda.synchronize()
+        #end_prepvolume = time.perf_counter()
+        #self.timing_dict['setup_inner']['prep-volume'] = end_prepvolume - start_prepvolume
         
-        start_transfer1 = time.perf_counter()
+        #torch.cuda.synchronize()
+        #start_transfer1 = time.perf_counter()
         self.dataset.to_device("cuda")
-        torch.cuda.synchronize()  # Ensure GPU is done
-        end_transfer1 = time.perf_counter()
-        transfer_duration += (end_transfer1 - start_transfer1)
-        self.timing_dict['setup_inner']['transfer-gpu'] = transfer_duration
+        #torch.cuda.synchronize()  # Ensure GPU is done
+        #end_transfer1 = time.perf_counter()
+        #transfer_duration += (end_transfer1 - start_transfer1)
+        #self.timing_dict['setup_inner']['transfer-gpu'] = transfer_duration
 
         self.logger = None
         if config_dict["use_neptune"]:
@@ -177,39 +182,43 @@ class RunManager:
         # not sure why this is necessary
         # the the DataLoader used to make the volume 
         # fails if the data is not moved back to the cpu
-
-        start_cpu_transfer = time.perf_counter()
+        #torch.cuda.synchronize()
+        #start_cpu_transfer = time.perf_counter()
         self.dataset.to_device("cpu")
-        torch.cuda.synchronize()
-        end_cpu_transfer = time.perf_counter()
-        self.timing_dict['swap_info']['transfer-cpu'].append(end_cpu_transfer - start_cpu_transfer)
+        #torch.cuda.synchronize()
+        #end_cpu_transfer = time.perf_counter()
+        #self.timing_dict['swap_info']['transfer-cpu'].append(end_cpu_transfer - start_cpu_transfer)
 
-        start_swap = time.perf_counter()
+        #torch.cuda.synchronize()
+        #start_swap = time.perf_counter()
         self.dataset.swap_frames(frame_number = frame_number, sample_image = sample_image)
-        torch.cuda.synchronize()
-        end_swap = time.perf_counter()
-        self.timing_dict['swap_info']['swap-frames'].append(end_swap - start_swap)
+        #torch.cuda.synchronize()
+        #end_swap = time.perf_counter()
+        #self.timing_dict['swap_info']['swap-frames'].append(end_swap - start_swap)
 
         self.timing_dict = self.dataset.timing_dict
 
-        start_gpu_transfer = time.perf_counter()
+       # torch.cuda.synchronize()
+        #start_gpu_transfer = time.perf_counter()
         self.reference_image = self.dataset.reference_image.cuda()
-        torch.cuda.synchronize()
-        end_gpu_transfer = time.perf_counter()
-        gpu_transfer_time = end_gpu_transfer - start_gpu_transfer
+        #torch.cuda.synchronize()
+        #end_gpu_transfer = time.perf_counter()
+        #gpu_transfer_time = end_gpu_transfer - start_gpu_transfer
 
-        start_prepvol = time.perf_counter()
+        #torch.cuda.synchronize()
+        #start_prepvol = time.perf_counter()
         self.prepare_volume()
-        torch.cuda.synchronize()
-        end_prepvol = time.perf_counter()
-        self.timing_dict['swap_info']['prep-volume'].append(end_prepvol - start_prepvol)
+        #torch.cuda.synchronize()
+        #end_prepvol = time.perf_counter()
+        #self.timing_dict['swap_info']['prep-volume'].append(end_prepvol - start_prepvol)
 
-        start_gpu_transfer2 = time.perf_counter()
+        #torch.cuda.synchronize()
+        #start_gpu_transfer2 = time.perf_counter()
         self.dataset.to_device("cuda")
-        torch.cuda.synchronize()  # Ensure GPU is done
-        end_gpu_transfer2 = time.perf_counter()
-        gpu_transfer_time += (end_gpu_transfer2 - start_gpu_transfer2)
-        self.timing_dict['swap_info']['transfer-gpu'].append(gpu_transfer_time)
+        #torch.cuda.synchronize()  # Ensure GPU is done
+        #end_gpu_transfer2 = time.perf_counter()
+        #gpu_transfer_time += (end_gpu_transfer2 - start_gpu_transfer2)
+        #self.timing_dict['swap_info']['transfer-gpu'].append(gpu_transfer_time)
 
         if self.config_dict["use_neptune"]:
             self.setup_logger()
@@ -261,17 +270,9 @@ class RunManager:
         return outputs, loss_values
 
     def run_epoch(self, i, log=False):
-        if i == 0:
-            if self.frame_time is not None:
-                self.times_per_frame.append(self.frame_time)
-            self.frame_time = 0.0
         sample = self.dataset.get_full_sample()
         numbers = sample['image_numbers'].tolist()
-        start = time.perf_counter()
         outputs, loss_values = self.train_sample(sample)
-        torch.cuda.synchronize()
-        end = time.perf_counter()
-        self.frame_time += (end - start)
 
         warp_images = outputs["warped_imgs"]
         mask_images = outputs["masks"]
