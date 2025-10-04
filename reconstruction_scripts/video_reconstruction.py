@@ -1,16 +1,23 @@
 # this script sequntially reconstructs frames from a video 
 # re-using the same network for each frame
 
-from filmscope.reconstruction import generate_config_dict, RunManager
-from filmscope.recon_util import get_sample_information
-from filmscope.config import path_to_data
-
 import xarray as xr
 import os
 from tqdm import tqdm
 import sys 
 import select
 from matplotlib import pyplot as plt
+
+from filmscope.reconstruction import generate_config_dict, RunManager
+from filmscope.recon_util import get_sample_information
+from filmscope.config import path_to_data
+
+print(os.getcwd())
+sys.path.append('/home/steven/mcam-FiLMScope')
+
+
+
+print(sys.path)
 
 # select sample name and gpu number
 sample_name = "knuckle_video"

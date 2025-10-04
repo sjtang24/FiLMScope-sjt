@@ -77,6 +77,7 @@ def play_video(frames_array, fps=30):
     """
     Display a 4D NumPy array (video) as a video with a given frames per second (fps).
     """
+    print('Using updated method.')
     num_frames = frames_array.shape[0]
     
     # Iterate over frames and display them
@@ -84,10 +85,12 @@ def play_video(frames_array, fps=30):
     canvas = plt.imshow(frames_array[0])
     plt.clim(np.min(frames_array), np.max(frames_array))
     plt.colorbar()
+    plt.title('Frame 0')
     plt.axis('off')
     for i in range(num_frames):
         start_time = time.time() 
         canvas.set_data(frames_array[i])
+        plt.title(f'Frame {i}')
         #fig.canvas.draw()
         #plt.axis('off')
         display(plt.gcf())

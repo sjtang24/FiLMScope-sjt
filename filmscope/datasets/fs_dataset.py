@@ -5,7 +5,7 @@ from filmscope.calibration import generate_normalized_shift_maps
 import cv2
 import torch
 from torch.utils.data import Dataset
-
+import time
 from filmscope.util import load_dictionary, load_image_set, load_from_single_image
 
 
@@ -13,9 +13,10 @@ from filmscope.util import load_dictionary, load_image_set, load_from_single_ima
 class FSDataset(Dataset):
     def __init__(
         self,
-        image_filename,
+        timing_dict,
         calibration_filename,
         image_numbers,
+        image_filename = None, sample = None,
         downsample=1,
         crop_values=(0, 1, 0, 1),
         enforce_divisible=32, # set to -1 to not enforce
@@ -29,26 +30,40 @@ class FSDataset(Dataset):
         height_est=0,  # this should be set if ref_crop_center is set
         crop_centers=None,  # dictionary with image numbers as keys, (x, y) point in image coordinates as values
         crop_size=None,  # length 2 tuple with normalized crop size (i.e. values betwteen 0 and 1)
+        ensure_grayscale=True,
+        noise=[0, 0], # mean, std 
     ):
+        self.timing_dict = timing_dict
+        self.timing_dict['swap_frames_info'] = {}
         self.is_single_image = len(load_dictionary(calibration_filename)["crop_indices"]) != 0
         self.calibration_filename = calibration_filename
+        self.ensure_grayscale = ensure_grayscale
 
         self.blank_filename = blank_filename
         
         self.image_numbers = torch.asarray(image_numbers)
         self.image_filename = image_filename
+        self.sample = sample
         self.downsample = downsample
         self.frame_number = frame_number
-        images = self.prep_images()
+        
+        prep_start = time.time()
+        images = self.prep_images(noise)
+        torch.cuda.synchronize()
+        prep_end = time.time()
+        timing_dict['swap_frames_info']['image-prep'] = [prep_end - prep_start]
 
+        start_cropping = time.time()
         # prepare the necessary maps
         # for legacy reasons these start out as numpy arrays
         # instead of torch tensors
         shape = (images.shape[0], images.shape[1], images.shape[2], 2)
         warped_shift_slope_maps = generate_normalized_shift_maps(
-            calibration_filename, type="warped_shift_slope", image_shape=images.shape[1:3])
+            calibration_filename, type="warped_shift_slope", image_shape=images.shape[1:3],
+            image_numbers=image_numbers)
         inv_inter_camera_maps = generate_normalized_shift_maps(
-            calibration_filename, type="inv_inter_camera", image_shape=images.shape[1:3])
+            calibration_filename, type="inv_inter_camera", image_shape=images.shape[1:3],
+            image_numbers=image_numbers)
 
         # identify the reference camera, which should be provided in every batch
         # and get the extra needed map
@@ -233,6 +248,9 @@ class FSDataset(Dataset):
             inv_inter_camera_maps = crop_iis_maps
 
         self.images = images.permute([0, 3, 1, 2]).to(torch.float32)
+        torch.cuda.synchronize()
+        end_cropping = time.time()
+        self.timing_dict['swap_frames_info']['image-crop'] = [end_cropping - start_cropping]
         self.warped_shift_slope_maps = warped_shift_slope_maps
         self.inv_inter_camera_maps = inv_inter_camera_maps
         self.reference_camera = reference_camera_num
@@ -277,46 +295,83 @@ class FSDataset(Dataset):
             "masks": self.masks, 
         }
 
-    def prep_images(self):
-        if self.is_single_image:
-            if self.downsample != 1:
-                raise ValueError("Only set up for downsample=1 with single images")
-            images_dict = load_from_single_image(self.image_filename,
-                                                 self.calibration_filename)
-        else: 
+    def prep_images(self, noise=[0,0]):
+        if 'prep_info' not in self.timing_dict:
+            self.timing_dict['prep_info'] = {
+                'load' : [],
+                'copy' : [] 
+            } 
+
+        start_load = time.perf_counter()
+        if self.sample is None:
+            if self.is_single_image:
+                if self.downsample != 1:
+                    raise ValueError("Only set up for downsample=1 with single images")
+                images_dict = load_from_single_image(self.image_filename,
+                                                    self.calibration_filename)
+            else: 
+                images_dict = load_image_set(
+                    filename=self.image_filename,
+                    image_numbers=self.image_numbers.tolist(),
+                    downsample=self.downsample,
+                    frame_number=self.frame_number,
+                    blank_filename=self.blank_filename#,
+                    #ensure_grayscale=self.ensure_grayscale
+                )
+        else:
             images_dict = load_image_set(
-                filename=self.image_filename,
+                images = self.sample,
                 image_numbers=self.image_numbers.tolist(),
                 downsample=self.downsample,
                 frame_number=self.frame_number,
-                blank_filename=self.blank_filename,
+                blank_filename=self.blank_filename
             )
+        torch.cuda.synchronize()
+        end_load = time.perf_counter()
+        self.timing_dict['prep_info']['load'].append(end_load - start_load)
 
+        start_copy = time.perf_counter()
         images = None
         for i, (image_num, image) in enumerate(images_dict.items()):
+            #print(image_num)
+            # must be a cleaner way to do this 
+            if len(image.shape) == 2:
+                image = image[:, :, None]
             if images is None:
                 images = torch.zeros(
-                    (len(images_dict), image.shape[0], image.shape[1], 1),
+                    (len(images_dict), image.shape[0], image.shape[1], image.shape[2]),
                     dtype=torch.float32,
                 )
                         
-            images[i, :, :, 0] = torch.asarray(image.copy())
-
+            images[i] = torch.asarray(image.copy())
+        noise = torch.rand_like(images) * noise[0] + noise[1]
+        images = images + noise 
+        images = torch.clamp(images, 0, 255)
+        torch.cuda.synchronize()
+        end_copy = time.perf_counter()
+        self.timing_dict['prep_info']['copy'].append(end_copy - start_copy)
         return images
 
     # this could easily be modified to allow for switching image sets
-    def swap_frames(self, frame_number):
-        if frame_number == self.frame_number:
+    def swap_frames(self, frame_number, sample_image= None):
+        if frame_number == self.frame_number and sample_image is None:
             return
         
+        self.sample = sample_image
         self.frame_number = frame_number
-        images = self.prep_images()
 
+        start_prep_img = time.perf_counter()
+        images = self.prep_images()
+        torch.cuda.synchronize()
+        end_prep_img = time.perf_counter()
+        self.timing_dict['swap_frames_info']['image-prep'].append(end_prep_img - start_prep_img)
+        
         # 2024/06/19
         # this is  new, and a lot of this is copy paste
         # should condense into a function that can be used here and in the __init__ func
         if isinstance(self.full_crops, dict):
-            for image_number in self.image_numbers.tolist():
+            start_crop = time.perf_counter()
+            for i, image_number in enumerate(self.image_numbers.tolist()):
                 startx, endx, starty, endy = self.full_crops[image_number]
 
                 startx2 = max(startx, 0)
@@ -333,8 +388,11 @@ class FSDataset(Dataset):
                 else:
                     endy = endy - starty
 
-                self.images[image_number, :, startx2 - startx:endx, starty2 - starty:endy] = (
-                    images[image_number, startx2:endx2, starty2:endy2].permute([2, 0, 1]))
+                self.images[i, :, startx2 - startx:endx, starty2 - starty:endy] = (
+                    images[i, startx2:endx2, starty2:endy2].permute([2, 0, 1]))
+            torch.cuda.synchronize()
+            end_crop = time.perf_counter()
+            self.timing_dict['swap_frames_info']['image-crop'].append(end_crop - start_crop)
             return
 
         # crop

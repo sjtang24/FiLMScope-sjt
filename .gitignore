@@ -3,3 +3,14 @@
 **\.neptune
 temp_download_folder*
 untracked_test_scripts*
+**\*.png
+*.png
+*.pth
+*.pt
+*.nc
+calibration_information
+*.pkl
+*.json
+*.sh
+*.txt
+*.yaml

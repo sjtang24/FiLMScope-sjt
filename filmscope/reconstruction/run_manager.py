@@ -8,12 +8,16 @@ from .log_manager import NeptuneLogManager
 import torch
 from torch.utils.data import DataLoader
 import torch.optim as optim
+import time 
 
 class RunManager:
-    def __init__(self, config_dict, guide_map=None,
+    def __init__(self, timing_dict, config_dict, sample=None, calibration_file=None, guide_map=None,
                  prev_model=None, global_mask=None, run_name=None):
+        # sample should be the xarray passed in by the mcam loop
         self.run_name = run_name
         self.config_dict = config_dict
+        self.timing_dict = timing_dict
+        self.timing_dict['setup_inner'] = {}
         self.run_args = config_dict["run_args"]
         self.info = config_dict["sample_info"]
         self.loss_w = config_dict["loss_weights"]
@@ -27,32 +31,14 @@ class RunManager:
 
         frame_number = self.run_args["frame_number"]
 
-        if self.info["blank_filename"] is not None:
+        if 'blank_filename' in self.info and self.info["blank_filename"] is not None:
             blank_filename = path_to_data + self.info["blank_filename"]
         else:
             blank_filename = None
-        self.dataset = FSDataset(
-            path_to_data + self.info["image_filename"],
-            path_to_data + self.info["calibration_filename"],
-            self.info["image_numbers"],
-            self.info["downsample"],
-            self.info["crop_values"],
-            frame_number=frame_number,
-            ref_crop_center=self.info["ref_crop_center"],
-            crop_size=self.info["crop_size"],
-            height_est=self.info["height_est"],
-            blank_filename=blank_filename,
-        )
-
-        self.image_loader = DataLoader(
-            self.dataset,
-            self.run_args["batch_size"],
-            shuffle=self.run_args["loader_shuffle"],
-            num_workers=self.run_args["loader_num_workers"],
-            drop_last=self.run_args["drop_last"],
-            pin_memory=True
-        )
-
+        self.setup_time_per_frame = []
+        self.times_per_frame = []
+        self.frame_time = None
+     
         if prev_model is not None:
             self.model = prev_model
         else:
@@ -79,6 +65,43 @@ class RunManager:
             smooth_lambda=self.loss_w["smooth_lambda"]
         ).cuda()
 
+        if sample is None:
+            image_filename = path_to_data + self.info["image_filename"]
+        else:
+            image_filename = None 
+
+        start_load = time.perf_counter()
+        self.dataset = FSDataset(
+            self.timing_dict,
+            calibration_file, #path_to_data + self.info["calibration_filename"],
+            self.info["image_numbers"],
+            sample = sample, image_filename=image_filename, #path_to_data + self.info["image_filename"]
+            downsample=self.info["downsample"],
+            crop_values=self.info["crop_values"],
+            frame_number=frame_number,
+            ref_crop_center=self.info["ref_crop_center"],
+            crop_size=self.info["crop_size"],
+            height_est=self.info["height_est"],
+            blank_filename=blank_filename,
+        )
+        torch.cuda.synchronize()
+        end_load = time.perf_counter()
+        self.timing_dict['setup_inner']['create-dataset'] = [end_load - start_load]
+
+        start_dler = time.perf_counter()
+        self.image_loader = DataLoader(
+            self.dataset,
+            self.run_args["batch_size"],
+            shuffle=self.run_args["loader_shuffle"],
+            num_workers=self.run_args["loader_num_workers"],
+            drop_last=self.run_args["drop_last"],
+            pin_memory=True
+        )
+        torch.cuda.synchronize()
+        end_dler = time.perf_counter()
+        self.timing_dict['setup_inner']['batching'] = [end_dler - start_dler]
+
+        start_transfer = time.perf_counter()
         # prepare other things needed throughout reconstruction
         self.reference_image = self.dataset.reference_image.cuda()
         self.reference_shift_slopes = self.dataset.ref_camera_shift_slopes.cuda()
@@ -87,10 +110,22 @@ class RunManager:
                 self.info["depth_range"][1],
                 self.run_args["num_depths"], dtype=torch.float32)
         self.depth_values = tocuda(self.depth_values)
+        torch.cuda.synchronize()
+        end_transfer = time.perf_counter()
+        transfer_duration = end_transfer - start_transfer
 
+        start_prepvolume = time.perf_counter()
         self.prepare_volume()
-
+        torch.cuda.synchronize()
+        end_prepvolume = time.perf_counter()
+        self.timing_dict['setup_inner']['prep-volume'] = end_prepvolume - start_prepvolume
+        
+        start_transfer1 = time.perf_counter()
         self.dataset.to_device("cuda")
+        torch.cuda.synchronize()  # Ensure GPU is done
+        end_transfer1 = time.perf_counter()
+        transfer_duration += (end_transfer1 - start_transfer1)
+        self.timing_dict['setup_inner']['transfer-gpu'] = transfer_duration
 
         self.logger = None
         if config_dict["use_neptune"]:
@@ -126,17 +161,55 @@ class RunManager:
             run_name=self.run_name
         )
 
-    def swap_frames(self, frame_number):
+    # TODO: create a new function to pass in an xarray
+
+    def swap_frames(self, frame_number = -1, sample_image = None):
+        if 'swap_info' not in self.timing_dict:
+            self.timing_dict['swap_info'] = {
+                'transfer-cpu' : [],
+                'transfer-gpu' : [],
+                'swap-frames' : [],
+                'prep-volume' : []
+            }
+
         self.run_args["frame_number"] = frame_number
 
         # not sure why this is necessary
         # the the DataLoader used to make the volume 
         # fails if the data is not moved back to the cpu
+
+        start_cpu_transfer = time.perf_counter()
         self.dataset.to_device("cpu")
-        self.dataset.swap_frames(frame_number)
+        torch.cuda.synchronize()
+        end_cpu_transfer = time.perf_counter()
+        self.timing_dict['swap_info']['transfer-cpu'].append(end_cpu_transfer - start_cpu_transfer)
+
+        start_swap = time.perf_counter()
+        self.dataset.swap_frames(frame_number = frame_number, sample_image = sample_image)
+        torch.cuda.synchronize()
+        end_swap = time.perf_counter()
+        self.timing_dict['swap_info']['swap-frames'].append(end_swap - start_swap)
+
+        self.timing_dict = self.dataset.timing_dict
+
+        start_gpu_transfer = time.perf_counter()
         self.reference_image = self.dataset.reference_image.cuda()
+        torch.cuda.synchronize()
+        end_gpu_transfer = time.perf_counter()
+        gpu_transfer_time = end_gpu_transfer - start_gpu_transfer
+
+        start_prepvol = time.perf_counter()
         self.prepare_volume()
+        torch.cuda.synchronize()
+        end_prepvol = time.perf_counter()
+        self.timing_dict['swap_info']['prep-volume'].append(end_prepvol - start_prepvol)
+
+        start_gpu_transfer2 = time.perf_counter()
         self.dataset.to_device("cuda")
+        torch.cuda.synchronize()  # Ensure GPU is done
+        end_gpu_transfer2 = time.perf_counter()
+        gpu_transfer_time += (end_gpu_transfer2 - start_gpu_transfer2)
+        self.timing_dict['swap_info']['transfer-gpu'].append(gpu_transfer_time)
 
         if self.config_dict["use_neptune"]:
             self.setup_logger()
@@ -188,9 +261,18 @@ class RunManager:
         return outputs, loss_values
 
     def run_epoch(self, i, log=False):
+        if i == 0:
+            if self.frame_time is not None:
+                self.times_per_frame.append(self.frame_time)
+            self.frame_time = 0.0
         sample = self.dataset.get_full_sample()
         numbers = sample['image_numbers'].tolist()
+        start = time.perf_counter()
         outputs, loss_values = self.train_sample(sample)
+        torch.cuda.synchronize()
+        end = time.perf_counter()
+        self.frame_time += (end - start)
+
         warp_images = outputs["warped_imgs"]
         mask_images = outputs["masks"]
 

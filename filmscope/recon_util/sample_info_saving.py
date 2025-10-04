@@ -40,7 +40,7 @@ def _prep_individual_crop_info(
     return info
 
 def add_individual_crop(
-    sample_name,
+    sample_info,      #sample_name=None,
     crop_name=None,
     # this should generally not be specified
     filename=None,
@@ -48,7 +48,7 @@ def add_individual_crop(
     *args,
     **kwargs,
 ):
-    sample_info = get_sample_information(sample_name, filename)
+    #sample_info = get_sample_information(sample_name, filename)
     if "ind_crops" not in sample_info:
         crop_info = {}
         entry_num = 0
@@ -60,9 +60,9 @@ def add_individual_crop(
         sample_info=sample_info, *args, **kwargs
     )
 
-    if not save:
-        return crop_info[entry_num], -1
-
+    return crop_info[entry_num], -1
+    """if filename is none:
+        return crop_info[entry_num, -1]
     crop_info[entry_num]["crop_name"] = crop_name
 
     sample_info["ind_crops"] = crop_info
@@ -71,9 +71,9 @@ def add_individual_crop(
         filename = samples_filename
 
     sample_dict = load_dictionary(filename)
-    sample_dict[sample_name] = sample_info
+    sample_dict['sample'] = sample_info
     save_dictionary(sample_dict, filename)
-    return crop_info[entry_num], entry_num
+    return crop_info[entry_num], entry_num"""
 
 
 def get_individual_crop(sample_name, crop_name=None, crop_number=None, filename=None):

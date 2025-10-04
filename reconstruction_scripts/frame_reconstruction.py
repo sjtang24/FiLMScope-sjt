@@ -1,23 +1,30 @@
+import sys
+sys.path.append('/home/steven/mcam-FiLMScope')
+
 from filmscope.reconstruction import RunManager, generate_config_dict 
 from filmscope.util import get_timestamp
 from filmscope.config import log_folder
 from tqdm import tqdm
 import os
 import torch
+import matplotlib.pyplot as plt
 
 # select the name of a sample previously saved using "save_new_sample.ipynb",
 # the gpu number, and whether or not to log with neptune.ai
 sample_name = "skull_with_tool"
-gpu_number = "0"
+gpu_number = '0'
 use_neptune = False
+CALIBRATION_FILE = 'data/skull_with_tool/calibration_information'
+CAMERA_ARRANGEMENT = [13, 14, 15, 16, 19, 20, 21, 22, 25, 26, 27, 28, 31, 32, 33, 34]
+
 
 os.environ["CUDA_VISIBLE_DEVICES"] = gpu_number
 
-config_dict = generate_config_dict(sample_name=sample_name, gpu_number=gpu_number, downsample=4,
-                                   camera_set="all", use_neptune=use_neptune,
-                                   run_args={"iters": 250, "batch_size": 12, "num_depths": 64,
-                                             "display_freq": 50},)
-run_manager = RunManager(config_dict)
+config_dict = generate_config_dict(sample_name=sample_name, gpu_number=gpu_number, downsample=8,
+                                   camera_set = "custom", custom_image_numbers = CAMERA_ARRANGEMENT, use_neptune=use_neptune,
+                                   run_args={"iters": 250, "batch_size": 12, "num_depths": 32,
+                                             "display_freq": 1},)
+run_manager = RunManager(config_dict, calibration_file=CALIBRATION_FILE)
 
 # if logging is not done with neptune
 # set up a folder for logging models and depth maps during reconstruction
@@ -38,10 +45,17 @@ for i in tqdm(range(iters)):
     # this section can be edited to change what is recorded
     if log and not config_dict["use_neptune"]:
         # save model
-        model_filename = run_log_folder + f'/model_epoch_{i}.pth'
-        torch.save(run_manager.model.state_dict(), model_filename)
-        # save height map
-        depth_filename = run_log_folder + f'/depth_epoch_{i}.pt'
-        torch.save(outputs["depth"], depth_filename)
+        """if i % 25 == 0:
+            model_filename = run_log_folder + f'/model_epoch_{i}.pth'
+            torch.save(run_manager.model.state_dict(), model_filename)
+            # save height map
+            depth_filename = run_log_folder + f'/depth_epoch_{i}.pt'
+            torch.save(outputs["depth"], depth_filename)"""
+        fig, (ax0, ax1) = plt.subplots(1, 2) 
+        ax1.imshow(outputs["depth"].detach().cpu().squeeze(), cmap='turbo')
+        ax0.imshow(run_manager.reference_image.cpu().squeeze(), cmap='gray')
+        ax1.set_title(f"height map, iteration {i}")
+        ax0.set_title(f"reference image, frame 0")
+        plt.savefig(run_log_folder + '/heightmaps')
 
 run_manager.end()

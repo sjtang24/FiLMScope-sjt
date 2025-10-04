@@ -71,10 +71,21 @@ def convert_to_array_image_numbers(image_numbers, total_images=48, exif_orientat
         image_x_y_locs[i] = _convert_to_array_image_number(number)
     return image_x_y_locs
 
-def load_image_set(filename, image_numbers=None, blank_filename=None,
+def load_image_set(images = None, filename=None, image_numbers=None, blank_filename=None,
                    downsample=1, frame_number=-1):
-    dataset = xr.open_dataset(filename)
+    if filename is None == images is None:
+        raise ValueError('Must either input a filename to dataset or the actual dataset!')
 
+    if filename is not None:
+        dataset = xr.open_dataset(filename)
+    elif images is not None:
+        dataset = images
+
+    #TODO: DELTE
+    #print(xr.__version__)
+    #print(xr.__file__)
+    #input('PAUSE')
+    
     # this is a little convoluted,
     # but just trying to find the image numbers
     # for all cameras in the array
@@ -129,7 +140,7 @@ def load_image_set(filename, image_numbers=None, blank_filename=None,
 
             image = image - blank_image * exposure / blank_exposure
             images[key] = image
-
+    #input(images)
     return images
 
 

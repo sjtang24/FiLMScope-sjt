@@ -41,7 +41,7 @@ default_run_args = {
         "reuse_model": True,  # only for videos
     }
 
-
+# TODO this is needed (check slack)
 default_crop_info = {
     "depth_range": None, # (min_height, max_height)
     "height_est": None, # float, within depth_range 
@@ -72,21 +72,27 @@ cam_num_sets = {
         "spread_3x3": np.asarray([6, 8, 10, 18, 20, 22, 30, 32, 34])
     }
 
-
-def generate_config_dict(gpu_number, sample_name, use_neptune=False,
+# TODO: Given crop information, with custom_crop_info (with dummy sample name)
+def generate_config_dict(gpu_number, sample_name=None, use_neptune=False,
                          downsample=1, camera_set="all",
                          frame_number=-1,
                          use_individual_crops=True, load_crop_entry=False, log_description="",
                          loss_weights={}, run_args={}, custom_image_numbers=None,
-                         custom_crop_info={}):
+                         custom_crop_info={}, crop_values = None):
     if custom_image_numbers is not None:
         camera_set = "custom"
         cam_num_sets["custom"] = custom_image_numbers
 
     # put the settings into the sample info/wherever they should be 
-    sample_info = get_sample_information(sample_name) 
+    if sample_name is not None:
+        sample_info = get_sample_information(sample_name) # make empty dict
+    else:
+        sample_info = {}
+        sample_info['crop_values'] = crop_values
     sample_info["downsample"] = downsample
     sample_info["camera_set"] = camera_set
+    if "crop_values" not in sample_info:
+        sample_info['crop_values'] = [0.0, 1.0, 0.0, 1.0]
 
     if use_individual_crops:
         if load_crop_entry:
@@ -94,7 +100,7 @@ def generate_config_dict(gpu_number, sample_name, use_neptune=False,
             crop_number = None
             crop_name = "full"
             crop_info, entry_number = get_individual_crop(
-                sample_name, crop_name, crop_number
+                sample_info, crop_name, crop_number
             )
 
         else:
@@ -105,7 +111,7 @@ def generate_config_dict(gpu_number, sample_name, use_neptune=False,
                     custom_crop_info[key] = default_crop_info[key]
 
             crop_info, entry_number = add_individual_crop(
-                sample_name,
+                sample_info,
                 custom_crop_info["crop_name"],
                 save=custom_crop_info["save"],
                 depth_range=custom_crop_info["depth_range"],
@@ -151,5 +157,6 @@ def generate_config_dict(gpu_number, sample_name, use_neptune=False,
         "loss_weights": loss_weights,
         "gpu_number": gpu_number,
     }
-
+    """    print('passed!')
+    input(config_dictionary)"""
     return config_dictionary
