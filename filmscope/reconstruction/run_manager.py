@@ -196,9 +196,9 @@ class RunManager:
         #end_swap = time.perf_counter()
         #self.timing_dict['swap_info']['swap-frames'].append(end_swap - start_swap)
 
-        self.timing_dict = self.dataset.timing_dict
+        #self.timing_dict = self.dataset.timing_dict
 
-       # torch.cuda.synchronize()
+        #torch.cuda.synchronize()
         #start_gpu_transfer = time.perf_counter()
         self.reference_image = self.dataset.reference_image.cuda()
         #torch.cuda.synchronize()

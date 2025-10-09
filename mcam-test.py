@@ -32,27 +32,28 @@ N_CAMERAS_X = 8
 N_CAMERAS_Y = 6
 DOWNSAMPLING = 16
 CAMERA_ARRANGEMENT = [13, 14, 15, 16, 19, 20, 21, 22, 25, 26, 27, 28, 31, 32, 33, 34]
-WARMUP_ITERATIONS = 1
-ITERATIONS = 1
+WARMUP_ITERATIONS = 600
+ITERATIONS = 3
 CALLIBRATION_FILE = 'data/dice_and_boat/calibration_information'
 CROPPING_XE = 1024
 CROPPING_YE = 64
 CROPPING_XS = 512
 CROPPING_YS = 64
-FILTER_SIZE = (1, 1)
+#FILTER_SIZE = (1, 5)
 
 mcam = MCAM()
 mcam.exposure = 150e-3
 # specify cameras from array to include
 camera_array = np.zeros((N_CAMERAS_X, N_CAMERAS_Y), dtype = bool)
 camera_array[2:-2, 1:-1] = True
-median_unfold = nn.Unfold(kernel_size = FILTER_SIZE)
+#median_unfold = nn.Unfold(kernel_size = FILTER_SIZE)
 
 timings_dict = {
     'capture' : [],
     'setup' : [],
     'frame_time' : [],
-    'post_processing' : []
+    'post_processing' : [],
+    'visualization' : []
 }
 
 # loop would start here, and can be used in the algorithm 
@@ -75,17 +76,17 @@ config_dict = generate_config_dict(
 )
 
 
-for i in range(2):
-    #torch.cuda.synchronize()
-    #img_capture_start = time.perf_counter()
+for i in range(25):
+    torch.cuda.synchronize()
+    img_capture_start = time.perf_counter()
     dset = mcam.acquire_selection(camera_array)
-    #torch.cuda.synchronize()
-    #img_capture_end = time.perf_counter()
-    #timings_dict['capture'].append(img_capture_end - img_capture_start)
+    torch.cuda.synchronize()
+    img_capture_end = time.perf_counter()
+    timings_dict['capture'].append(img_capture_end - img_capture_start)
     #images_to_consider = dset.images[2:-2, 1:-1, :, :]
    # print(dset)
-    #torch.cuda.synchronize()
-    #setup_start = time.perf_counter()
+    torch.cuda.synchronize()
+    setup_start = time.perf_counter()
     if i == 0: #initialize run manager
         run_manager = RunManager(
             timings_dict,
@@ -97,9 +98,9 @@ for i in range(2):
     else:
         run_manager.swap_frames(sample_image=dset)
         timings_dict = run_manager.timing_dict
-    #torch.cuda.synchronize()
-    #setup_end = time.perf_counter()
-    #timings_dict['setup'].append(setup_end - setup_start)
+    torch.cuda.synchronize()
+    setup_end = time.perf_counter()
+    timings_dict['setup'].append(setup_end - setup_start)
     
     iters = config_dict["run_args"]["iters"] if i == 0 else ITERATIONS
     losses = []
@@ -119,16 +120,18 @@ for i in range(2):
     total_duration = 0
     for j in tqdm(range(iters)):
         log = (j % config_dict["run_args"]["display_freq"] == 0) or (j == iters - 1)
-        #torch.cuda.synchronize()
-        #epoch_time_start = time.perf_counter()
+        torch.cuda.synchronize()
+        epoch_time_start = time.perf_counter()
         mask_images, warp_images, numbers, outputs, loss_values = run_manager.run_epoch(
             j, log=(log and config_dict["use_neptune"])
         )
-        #torch.cuda.synchronize()
-        #epoch_time_end = time.perf_counter()
-        #duration = epoch_time_end - epoch_time_start
-        #total_duration += duration
+        torch.cuda.synchronize()
+        epoch_time_end = time.perf_counter()
+        duration = epoch_time_end - epoch_time_start
+        total_duration += duration
 
+        """if j != iters - 1 and j % 20 != 0:
+            continue"""
         if j != iters - 1:
             continue
 
@@ -138,8 +141,8 @@ for i in range(2):
 
         fig, (ax0, ax1) = plt.subplots(1, 2, constrained_layout=True) 
 
-        #torch.cuda.synchronize()
-        #post_start = time.perf_counter()
+        torch.cuda.synchronize()
+        post_start = time.perf_counter()
         depth = outputs["depth"].detach()#.squeeze(0) #.cpu().squeeze()
 
         #print(f'shape: {depth.shape}')
@@ -162,22 +165,23 @@ for i in range(2):
        
         depths_cropped = depth_upsampled[:, :, sy:ey, sx:ex]
         ref_cropped = reference_upsampled[:, :, sy:ey, sx:ex]
-        
+        #print(depths_cropped.shape)
 #        depths = depth_upsampled.squeeze(0).squeeze(0)
         #ref = reference_upsampled.squeeze(0).squeeze(0)
 
-        depth_filtered = median_filter(depths_cropped, FILTER_SIZE, median_unfold)
-        #torch.cuda.synchronize()
-        #post_end = time.perf_counter()
-        #timings_dict['post_processing'].append(post_end - post_start)
+        #depth_filtered = median_filter(depths_cropped, FILTER_SIZE, median_unfold)
+        torch.cuda.synchronize()
+        post_end = time.perf_counter()
+        timings_dict['post_processing'].append(post_end - post_start)
         
+
+        torch.cuda.synchronize()
+        start_viz = time.perf_counter()
         depths = depths_cropped.squeeze(0).squeeze(0).cpu().numpy()        
         refs = ref_cropped.squeeze(0).squeeze(0).cpu().numpy()
         
-        actual_min, actual_max = depth.min(), depth.max()
-
         ax0.imshow(refs, cmap='gray')
-        depthmap = ax1.imshow(depths, cmap = 'turbo', vmin = actual_min, vmax = actual_max)
+        depthmap = ax1.imshow(depths, cmap = 'turbo', vmin = DEPTH_RANGE[0], vmax = DEPTH_RANGE[1])
         ax0.axis('off')
         ax1.axis('off')
 
@@ -192,6 +196,9 @@ for i in range(2):
         cbar.set_label('Depth (in mm)')
         
         plt.savefig(f'recons/reconstructions-mcam-frame{i}.png')
+        torch.cuda.synchronize()
+        end_viz = time.perf_counter()
+        timings_dict['visualization'].append(end_viz - start_viz)
         #plt.show()
         """plt.figure()
         plt.plot(run_manager.setup_time_per_frame)
@@ -209,7 +216,7 @@ run_manager.end()
 print(f"{np.mean(capture_times)} seconds (sdev: {np.std(capture_times)})")
 print(dset)
 mcam_data.save(dset, "example.nc")"""
-with open('timing-results.pkl', 'wb') as timingfile:
+with open(f'timing-results_{ITERATIONS}.pkl', 'wb') as timingfile:
     pickle.dump(timings_dict, timingfile)
 mcam.close()
 

@@ -75,7 +75,6 @@ def convert_to_array_image_numbers(image_numbers, total_images=48, exif_orientat
 
 def load_image_set(images = None, filename=None, image_numbers=None, blank_filename=None,
                    downsample=1, frame_number=-1):
-    start_load = time.perf_counter()
     if (filename is None) == (images is None):
         raise ValueError('Must either input a filename to dataset or the actual dataset!')
     if filename is not None:
@@ -84,8 +83,6 @@ def load_image_set(images = None, filename=None, image_numbers=None, blank_filen
     elif images is not None:
         dataset = images.compute()
 
-    end_load = time.perf_counter()
-    print(end_load - start_load)
     #TODO: DELTE
     #print(xr.__version__)
     #print(xr.__file__)
