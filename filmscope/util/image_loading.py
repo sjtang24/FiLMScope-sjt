@@ -110,7 +110,7 @@ def load_image_set(images = None, filename=None, image_numbers=None, blank_filen
             dataset = dataset.isel({"frame_number": 0})
 
     images = {}
-    for number in tqdm(image_numbers, "loading images"):
+    for number in image_numbers:
         image_x_y_locs = convert_to_array_image_numbers([number])
         x_cam = image_x_y_locs[0, 0]
         y_cam = image_x_y_locs[0, 1]

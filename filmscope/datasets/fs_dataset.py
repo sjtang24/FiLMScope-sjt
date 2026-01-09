@@ -7,7 +7,7 @@ import torch
 from torch.utils.data import Dataset
 import time
 from filmscope.util import load_dictionary, load_image_set, load_from_single_image
-
+from filmscope.recon_util.base_warp_functions import generate_base_grid
 
 # crop_values should be (startx, endx, starty, endy) normalized to full image size
 class FSDataset(Dataset):
@@ -258,6 +258,7 @@ class FSDataset(Dataset):
         self.reference_camera = reference_camera_num
         self.ref_camera_shift_slopes = ref_camera_shift_slopes
         self.masks = masks
+        self.base_grid = generate_base_grid((self.images[0].shape[1], self.images[0].shape[2])).cuda()
 
     def __len__(self):
         return len(self.image_numbers)
@@ -336,7 +337,7 @@ class FSDataset(Dataset):
 
         #torch.cuda.synchronize()
         #start_copy = time.perf_counter()
-        images = None
+        """images = None
         for i, (image_num, image) in enumerate(images_dict.items()):
             #print(image_num)
             # must be a cleaner way to do this 
@@ -349,6 +350,13 @@ class FSDataset(Dataset):
                 )
                         
             images[i] = torch.asarray(image.copy())
+        noise = torch.rand_like(images) * noise[0] + noise[1]
+        images = images + noise 
+        images = torch.clamp(images, 0, 255)"""
+
+        images = np.stack([image if len(image.shape) == 3 else image[:, :, None] for image in images_dict.values()], 
+                    dtype=np.float32)
+        images = torch.from_numpy(images).to("cuda", non_blocking=True)
         noise = torch.rand_like(images) * noise[0] + noise[1]
         images = images + noise 
         images = torch.clamp(images, 0, 255)

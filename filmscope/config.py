@@ -1,5 +1,5 @@
 # location where data was downloaded
-path_to_data = "/home/steven/mcam-FiLMScope/data"
+path_to_data = "/home/steven/Documents/FiLMScope-sjt"
 
 # this is where logging will be performed by some scripts
 log_folder = path_to_data + '/log'

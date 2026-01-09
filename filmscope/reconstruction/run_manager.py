@@ -91,6 +91,7 @@ class RunManager:
 
         #torch.cuda.synchronize()
         #start_dler = time.perf_counter()
+        # TODO: remove
         self.image_loader = DataLoader(
             self.dataset,
             self.run_args["batch_size"],
@@ -157,7 +158,7 @@ class RunManager:
             self.volume_variance = volume_sq.div_(num_views).sub_(
                 volume.div_(num_views).pow_(2)
             )
-
+        
     def setup_logger(self): 
         self.logger = NeptuneLogManager(
             dataset=self.dataset,
@@ -184,7 +185,7 @@ class RunManager:
         # fails if the data is not moved back to the cpu
         #torch.cuda.synchronize()
         #start_cpu_transfer = time.perf_counter()
-        self.dataset.to_device("cpu")
+        #self.dataset.to_device("cpu")
         #torch.cuda.synchronize()
         #end_cpu_transfer = time.perf_counter()
         #self.timing_dict['swap_info']['transfer-cpu'].append(end_cpu_transfer - start_cpu_transfer)
@@ -200,7 +201,7 @@ class RunManager:
 
         #torch.cuda.synchronize()
         #start_gpu_transfer = time.perf_counter()
-        self.reference_image = self.dataset.reference_image.cuda()
+        #self.reference_image = self.dataset.reference_image.cuda()
         #torch.cuda.synchronize()
         #end_gpu_transfer = time.perf_counter()
         #gpu_transfer_time = end_gpu_transfer - start_gpu_transfer
@@ -214,7 +215,7 @@ class RunManager:
 
         #torch.cuda.synchronize()
         #start_gpu_transfer2 = time.perf_counter()
-        self.dataset.to_device("cuda")
+        #self.dataset.to_device("cuda")
         #torch.cuda.synchronize()  # Ensure GPU is done
         #end_gpu_transfer2 = time.perf_counter()
         #gpu_transfer_time += (end_gpu_transfer2 - start_gpu_transfer2)

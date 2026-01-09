@@ -43,45 +43,44 @@ def generate_warp_volume(
 
 # depth values should be a torch tensor
 # TODO: make it possible to save to file instead of returning?
-def get_ss_volume_from_dataset(dataset, batch_size, depth_values, get_squared):
+def get_ss_volume_from_dataset(dataset, batch_size=16, depth_values=None, get_squared=None):
+    """print(len(dataset))
     ImageLoader = DataLoader(
         dataset,
         batch_size,
         shuffle=False,
         num_workers=4,
         drop_last=False,
-    )
+    )"""
 
     volume = None
     if get_squared:
         volume_sq = None
 
-    for sample in ImageLoader:
-        sample_cuda = tocuda(sample)
-        images = sample_cuda["imgs"]
-        warped_ss_maps = sample_cuda["warped_shift_slope_maps"] - torch.asarray(dataset.ref_camera_shift_slopes).cuda()
-        iic_maps = sample_cuda["inv_inter_camera_maps"]
+    sample_cuda = tocuda(dataset.get_full_sample())
+    images = sample_cuda["imgs"]
+    warped_ss_maps = sample_cuda["warped_shift_slope_maps"] - torch.asarray(dataset.ref_camera_shift_slopes).cuda()
+    iic_maps = sample_cuda["inv_inter_camera_maps"]
 
-        images = torch.unbind(images, 0)
-        iic_maps = torch.unbind(iic_maps, 0)
-        warped_ss_maps = torch.unbind(warped_ss_maps, 0)
-        image_shape = (images[0].shape[1], images[0].shape[2])
-        base_grid = generate_base_grid(image_shape).cuda()
+    images = torch.unbind(images, 0)
+    iic_maps = torch.unbind(iic_maps, 0)
+    warped_ss_maps = torch.unbind(warped_ss_maps, 0)
+    base_grid = dataset.base_grid
 
-        for image, iic_map, warped_ss_map in zip(images, iic_maps, warped_ss_maps):
-            warped_volume = generate_warp_volume(
-                image.unsqueeze(0), depth_values, warped_ss_map, iic_map, base_grid
-            )
-            warped_volume = warped_volume.permute(1, 0, 2, 3)[None]
-            if volume is None:
-                volume = warped_volume
-            else:
-                volume = volume + warped_volume
+    for image, iic_map, warped_ss_map in zip(images, iic_maps, warped_ss_maps):
+        warped_volume = generate_warp_volume(
+            image.unsqueeze(0), depth_values, warped_ss_map, iic_map, base_grid
+        )
+        warped_volume = warped_volume.permute(1, 0, 2, 3)[None]
+        if volume is None:
+            volume = warped_volume
+        else:
+            volume = volume + warped_volume
 
-            if get_squared and volume_sq is None:
-                volume_sq = warped_volume**2
-            elif get_squared:
-                volume_sq = volume_sq + warped_volume**2
+        if get_squared and volume_sq is None:
+            volume_sq = warped_volume**2
+        elif get_squared:
+            volume_sq = volume_sq + warped_volume**2
 
     if get_squared:
         return volume, volume_sq

@@ -2,8 +2,8 @@ import matplotlib.pyplot as plt
 import pickle
 import numpy as np 
 
-TOTAL_ITERS = 25
-ITERS = 3
+TOTAL_ITERS = 10
+ITERS = 1
 with open(f'timing-results_{ITERS}.pkl', 'rb') as timing_file:
     timing_dict = pickle.load(timing_file)
 
