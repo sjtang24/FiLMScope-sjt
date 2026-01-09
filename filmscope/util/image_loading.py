@@ -109,7 +109,7 @@ def load_image_set(images = None, filename=None, image_numbers=None, blank_filen
         if "frame_number" in dataset.dims:
             dataset = dataset.isel({"frame_number": 0})
 
-    images = {}
+    images = []
     for number in image_numbers:
         image_x_y_locs = convert_to_array_image_numbers([number])
         x_cam = image_x_y_locs[0, 0]
@@ -118,15 +118,17 @@ def load_image_set(images = None, filename=None, image_numbers=None, blank_filen
 
         single_image = single_image.images.data
         single_image = single_image[::downsample, ::downsample]
-        images[number] = Image.fromarray(single_image)
+        images.append(np.rot90(single_image, k=1))  # 90° counter-clockwise
+
+        """images[number] = Image.fromarray(single_image)
         # rotate the necessary amount
         images[number] = images[number].transpose(Image.ROTATE_90)
 
-        images[number] = np.asarray(images[number])
+        images[number] = np.asarray(images[number])"""
 
     # if a blank filename is provided, subtract that out 
     # this can likely be improved in the future
-    if blank_filename is not None:
+    """if blank_filename is not None:
         blank_images_dict = load_image_set(filename=blank_filename,
                                            image_numbers=image_numbers,
                                            downsample=downsample)
@@ -142,7 +144,7 @@ def load_image_set(images = None, filename=None, image_numbers=None, blank_filen
 
             image = image - blank_image * exposure / blank_exposure
             images[key] = image
-    #input(images)
+    #input(images)"""
 
     return images
 

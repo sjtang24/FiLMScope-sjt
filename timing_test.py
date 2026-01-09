@@ -23,33 +23,52 @@ def generate_warp_volume(
     image, heights, warped_shift_slopes, inv_inter_camera_map, base_grid=None,
     return_grid=False
 ):
-    # make the grid stack with inter camera shifts
-    base_grid = base_grid + inv_inter_camera_map
-    base_grid = torch.stack([base_grid.squeeze(0)] * len(heights), dim=0)
-    # make the slope shifts for each height
-    heights = heights.view(-1, 1, 1, 1)
-    slope_shifts = (
-        torch.stack([warped_shift_slopes.squeeze(0)] * len(heights), dim=0) * heights
-    )
 
-    # add them
-    # recall that the shift slopes were warped, but never multiplied by -1 at this stage
-    # so we're doing that here
-    grid = base_grid + slope_shifts * -1
+    B, C, H, W = image.shape
+    D = heights.shape[0]
 
-    # then prepare the image
-    image_stack = torch.stack([image.squeeze(0)] * len(heights), dim=0)
+    if base_grid is None:
+        base_grid = generate_base_grid((H, W))  # (1, H, W, 2)
+
+    # Expand base grid across batch
+    base_grid = base_grid.expand(B, -1, -1, -1)
+
+    # Add inter-camera shifts
+    base_grid = base_grid + inv_inter_camera_map  # (B, H, W, 2)
+
+    # Expand along depth dimension
+    base_grid = base_grid[:, None].expand(B, D, H, W, 2)
+
+    heights = heights.view(1, D, 1, 1, 1)
+
+    slope_shifts = warped_shift_slopes[:, None] * heights
+
+    grid = base_grid - slope_shifts  # (B, D, H, W, 2)
+
+    # Prepare image stack
+    image_stack = image[:, None].expand(B, D, C, H, W)
+    image_stack = image_stack.reshape(B * D, C, H, W)
+
+    grid = grid.reshape(B * D, H, W, 2)
 
     warped_stack = F.grid_sample(
-        image_stack, grid, mode="bilinear", padding_mode="zeros",
+        image_stack,
+        grid,
+        mode="bilinear",
+        padding_mode="zeros",
         align_corners=False
     )
+
+    warped_stack = warped_stack.view(B, D, C, H, W)
+
+    if return_grid:
+        return warped_stack, grid.view(B, D, H, W, 2)
 
     return warped_stack
 
 os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 CROP_VALUES = (0, 1, 0, 1)
-N_ITERATIONS = 10
+N_ITERATIONS = 100
 DEPTH_RANGE = (-5, 5)
 N_CAMERAS_X = 8
 N_CAMERAS_Y = 6
@@ -58,9 +77,9 @@ CAMERA_ARRANGEMENT = [13, 14, 15, 16, 19, 20, 21, 22, 25, 26, 27, 28, 31, 32, 33
 WARMUP_ITERATIONS = 10
 ITERATIONS = 1
 CALLIBRATION_FILE = 'data/phantom/calibration_information'
-CROPPING_XE = 1024
+CROPPING_XE = 3056
 CROPPING_YE = 64
-CROPPING_XS = 512
+CROPPING_XS = 3056
 CROPPING_YS = 64
 #FILTER_SIZE = (1, 5)
 
@@ -107,8 +126,8 @@ run_manager = RunManager(
 )
 for i in range(N_ITERATIONS):
     run_manager.run_args["frame_number"] = -1 # trivial
-
     #run_manager.dataset.to_device("cpu") # time-consuming (0.08)
+
     frame_number = -1
     sample_image = dset # time-consuming (0.08)
 
@@ -117,15 +136,20 @@ for i in range(N_ITERATIONS):
         run_manager.dataset.frame_number = frame_number
 
         noise = [0, 0]
-
-        images_dict = load_image_set(                                   # 0.025s/0.08
+        torch.cuda.synchronize()
+        setup_start = time.perf_counter()
+        images = load_image_set(                                   # 0.003s/0.08
             images = run_manager.dataset.sample,
             image_numbers=run_manager.dataset.image_numbers.tolist(),
             downsample=run_manager.dataset.downsample,
             frame_number=run_manager.dataset.frame_number,
             blank_filename=run_manager.dataset.blank_filename
         )
-        images = np.stack([image if len(image.shape) == 3 else image[:, :, None] for image in images_dict.values()], 
+
+        torch.cuda.synchronize()
+        setup_end = time.perf_counter()
+        print(setup_end - setup_start)
+        images = np.stack([image if len(image.shape) == 3 else image[:, :, None] for image in images], 
                           dtype=np.float32)
         images = torch.from_numpy(images).to("cuda", non_blocking=True)
         noise = torch.rand_like(images) * noise[0] + noise[1]
@@ -165,20 +189,27 @@ for i in range(N_ITERATIONS):
     images = sample_cuda["imgs"]
     warped_ss_maps = sample_cuda["warped_shift_slope_maps"] - torch.asarray(dataset.ref_camera_shift_slopes).cuda()
     iic_maps = sample_cuda["inv_inter_camera_maps"]
-    images = torch.unbind(images, 0)
+
+    print(images.shape)
+    print(iic_maps.shape)
+    print(warped_ss_maps.shape)
+    """images = torch.unbind(images, 0)
     iic_maps = torch.unbind(iic_maps, 0)
-    warped_ss_maps = torch.unbind(warped_ss_maps, 0)
+    warped_ss_maps = torch.unbind(warped_ss_maps, 0)"""
     base_grid = dataset.base_grid
-    
-    for image, iic_map, warped_ss_map in zip(images, iic_maps, warped_ss_maps):
-        torch.cuda.synchronize()
-        setup_start = time.perf_counter()
-        warped_volume = generate_warp_volume(                                       # 0.0025s/image = 0.0545
-            image.unsqueeze(0), depth_values, warped_ss_map, iic_map, base_grid
-        )
-        torch.cuda.synchronize()
-        setup_end = time.perf_counter()
-        print(setup_end - setup_start)
+    warped_volumes = generate_warp_volume(                                       # 0.0025s/image = 0.0545
+        images, depth_values, warped_ss_maps, iic_maps, base_grid
+    )
+
+    volume = warped_volumes.sum(dim = 0, keepdim = True)
+    volume_sq = (warped_volumes ** 2).sum(dim = 0, keepdim = True)
+
+    PERM = (0, 2, 1, 3, 4)
+    volume = volume.permute(PERM)
+    volume_sq = volume_sq.permute(PERM)
+    """for image, iic_map, warped_ss_map in zip(images, iic_maps, warped_ss_maps):
+
+        
 
         # trivial 
         warped_volume = warped_volume.permute(1, 0, 2, 3)[None]
@@ -190,9 +221,8 @@ for i in range(N_ITERATIONS):
         if get_squared and volume_sq is None:
             volume_sq = warped_volume**2
         elif get_squared:
-            volume_sq = volume_sq + warped_volume**2
+            volume_sq = volume_sq + warped_volume**2"""
         
-    input()
     num_views = len(run_manager.dataset)
     run_manager.volume_variance = volume_sq.div_(num_views).sub_(
         volume.div_(num_views).pow_(2)

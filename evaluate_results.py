@@ -2,17 +2,17 @@ import matplotlib.pyplot as plt
 import pickle
 import numpy as np 
 
-TOTAL_ITERS = 10
+TOTAL_ITERS = 24
 ITERS = 1
 with open(f'timing-results_{ITERS}.pkl', 'rb') as timing_file:
     timing_dict = pickle.load(timing_file)
 
 print(timing_dict)
-capture_time = np.array(timing_dict['capture'])
-network_time = np.array(timing_dict['frame_time'])
-setup_time = np.array(timing_dict['setup'])
-postproc_time = np.array(timing_dict['post_processing'])
-viz_time = np.array(timing_dict['visualization'])
+capture_time = np.array(timing_dict['capture'])[1:]
+network_time = np.array(timing_dict['frame_time'])[1:]
+setup_time = np.array(timing_dict['setup'])[1:]
+postproc_time = np.array(timing_dict['post_processing'])[1:]
+viz_time = np.array(timing_dict['visualization'])[1:]
 
 frame = np.arange(TOTAL_ITERS)
 """

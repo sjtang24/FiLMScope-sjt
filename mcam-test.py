@@ -26,18 +26,18 @@ mamba install --channel ramonaoptics --yes "python=3.12" "owl-base"
 
 os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 CROP_VALUES = (0.0, 1.0, 0.0, 1.0)
-N_ITERATIONS = 10
+N_ITERATIONS = 25
 DEPTH_RANGE = (-5, 5)
 N_CAMERAS_X = 8
 N_CAMERAS_Y = 6
-DOWNSAMPLING = 8
+DOWNSAMPLING = 4
 CAMERA_ARRANGEMENT = [13, 14, 15, 16, 19, 20, 21, 22, 25, 26, 27, 28, 31, 32, 33, 34]
-WARMUP_ITERATIONS = 10
+WARMUP_ITERATIONS = 150
 ITERATIONS = 1
 CALLIBRATION_FILE = 'data/phantom/calibration_information'
 CROPPING_XE = 1024
 CROPPING_YE = 64
-CROPPING_XS = 512
+CROPPING_XS = 256
 CROPPING_YS = 64
 #FILTER_SIZE = (1, 5)
 
@@ -78,6 +78,8 @@ config_dict = generate_config_dict(
 
 for i in range(N_ITERATIONS):
     torch.cuda.synchronize()
+    if i == 1:
+        input('Start Recording...')
     img_capture_start = time.perf_counter()
     dset = mcam.acquire_selection(camera_array)
     torch.cuda.synchronize()
@@ -130,7 +132,7 @@ for i in range(N_ITERATIONS):
         duration = epoch_time_end - epoch_time_start
         total_duration += duration
 
-        """if j != iters - 1 and j % 5 != 0:
+        """if j != iters - 1 and j % 25 != 0:
             continue"""
         if j != iters - 1:
             continue
@@ -172,13 +174,14 @@ for i in range(N_ITERATIONS):
         timings_dict['post_processing'].append(post_end - post_start)
         
 
-        torch.cuda.synchronize()
-        start_viz = time.perf_counter()
         depths = depths_cropped.squeeze(0).squeeze(0).cpu().numpy()        
         refs = ref_cropped.squeeze(0).squeeze(0).cpu().numpy()
         
+        torch.cuda.synchronize()
+        start_viz = time.perf_counter()
+
         if i == 0:
-            plt.ion()
+            """plt.ion()"""
             fig, (ax0, ax1) = plt.subplots(1, 2, constrained_layout=True) 
 
             im_ref = ax0.imshow(refs, cmap='gray')
@@ -194,18 +197,16 @@ for i in range(N_ITERATIONS):
                 pad = 0.08
             )
             cbar.set_label('Depth (in mm)')
-            plt.show()
         else:
             im_ref.set_data(refs)
             im_depth.set_data(depths)
             plt.suptitle(f'Reference and Height Reconstructions for Frame {i}')
-            fig.canvas.draw_idle()
+            """fig.canvas.draw_idle()
             fig.canvas.flush_events()
-            plt.pause(0.025)
-        #plt.savefig(f'recons/reconstructions-mcam-frame{i}.png')
-        torch.cuda.synchronize()
+            plt.pause(0.025)"""
         end_viz = time.perf_counter()
         timings_dict['visualization'].append(end_viz - start_viz)
+        plt.savefig(f'recons/reconstructions-mcam-frame{i}.png')
         #plt.show()
         """plt.figure()
         plt.plot(run_manager.setup_time_per_frame)

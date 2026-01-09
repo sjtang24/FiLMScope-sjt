@@ -7,10 +7,10 @@ TOTAL_ITERS = 25
 MS_PER_S = 1000
 SPEEDUP = 1
 RUN = 5
-ITERS = 3
+ITERS = 1
 with open(f'timing-results_{ITERS}.pkl', 'rb') as timing_file:
     timing_dict = pickle.load(timing_file)
-
+print(timing_dict)
 capture_time = np.array(timing_dict['capture'])
 network_time = np.array(timing_dict['frame_time'])
 setup_time = np.array(timing_dict['setup'])
@@ -26,13 +26,13 @@ def extract_number(filename):
     stem, _ = os.path.splitext(filename)
     return int(stem.split('frame')[1])
 
-folder_path = f'recons/Run{RUN}'
+folder_path = f'recons'
 filenames = os.listdir(folder_path)
 
 images_files = sorted(filenames, key=extract_number)
 frames = [Image.open(folder_path + '/' + img) for img in images_files]
 frames[0].save(
-    f'reconstruction_run{RUN}.gif',
+    f'reconstructions.gif',
     format='GIF',
     save_all=True,
     append_images=frames[1:],

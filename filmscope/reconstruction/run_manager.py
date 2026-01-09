@@ -201,7 +201,7 @@ class RunManager:
 
         #torch.cuda.synchronize()
         #start_gpu_transfer = time.perf_counter()
-        #self.reference_image = self.dataset.reference_image.cuda()
+        self.reference_image = self.dataset.reference_image.cuda()
         #torch.cuda.synchronize()
         #end_gpu_transfer = time.perf_counter()
         #gpu_transfer_time = end_gpu_transfer - start_gpu_transfer

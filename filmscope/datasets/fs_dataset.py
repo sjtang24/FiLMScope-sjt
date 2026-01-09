@@ -311,10 +311,10 @@ class FSDataset(Dataset):
             if self.is_single_image:
                 if self.downsample != 1:
                     raise ValueError("Only set up for downsample=1 with single images")
-                images_dict = load_from_single_image(self.image_filename,
+                images = load_from_single_image(self.image_filename,
                                                     self.calibration_filename)
             else: 
-                images_dict = load_image_set(
+                images = load_image_set(
                     filename=self.image_filename,
                     image_numbers=self.image_numbers.tolist(),
                     downsample=self.downsample,
@@ -324,7 +324,7 @@ class FSDataset(Dataset):
                 )
         else:
             # proceeds here
-            images_dict = load_image_set(
+            images = load_image_set(
                 images = self.sample,
                 image_numbers=self.image_numbers.tolist(),
                 downsample=self.downsample,
@@ -354,7 +354,7 @@ class FSDataset(Dataset):
         images = images + noise 
         images = torch.clamp(images, 0, 255)"""
 
-        images = np.stack([image if len(image.shape) == 3 else image[:, :, None] for image in images_dict.values()], 
+        images = np.stack([image if len(image.shape) == 3 else image[:, :, None] for image in images], 
                     dtype=np.float32)
         images = torch.from_numpy(images).to("cuda", non_blocking=True)
         noise = torch.rand_like(images) * noise[0] + noise[1]
