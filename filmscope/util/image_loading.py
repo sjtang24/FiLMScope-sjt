@@ -73,7 +73,7 @@ def convert_to_array_image_numbers(image_numbers, total_images=48, exif_orientat
         image_x_y_locs[i] = _convert_to_array_image_number(number)
     return image_x_y_locs
 
-def load_image_set(images = None, filename=None, image_numbers=None, blank_filename=None,
+def load_image_set(reference_no, images = None, filename=None, image_numbers=None, blank_filename=None,
                    downsample=1, frame_number=-1):
     if (filename is None) == (images is None):
         raise ValueError('Must either input a filename to dataset or the actual dataset!')
@@ -117,8 +117,12 @@ def load_image_set(images = None, filename=None, image_numbers=None, blank_filen
         single_image = dataset.sel(image_y=y_cam, image_x=x_cam)
 
         single_image = single_image.images.data
+        single_image = np.rot90(single_image, k = 1)
+
+        if number == reference_no:
+            reference_image = single_image
         single_image = single_image[::downsample, ::downsample]
-        images.append(np.rot90(single_image, k=1))  # 90° counter-clockwise
+        images.append(single_image)  # 90° counter-clockwise
 
         """images[number] = Image.fromarray(single_image)
         # rotate the necessary amount
@@ -146,7 +150,7 @@ def load_image_set(images = None, filename=None, image_numbers=None, blank_filen
             images[key] = image
     #input(images)"""
 
-    return images
+    return reference_image, images
 
 
 # Currently, there needs to have been saved some calibration information

@@ -2,7 +2,7 @@ import matplotlib.pyplot as plt
 import pickle
 import numpy as np 
 
-TOTAL_ITERS = 24
+TOTAL_ITERS = 25
 ITERS = 1
 with open(f'timing-results_{ITERS}.pkl', 'rb') as timing_file:
     timing_dict = pickle.load(timing_file)
@@ -12,9 +12,16 @@ capture_time = np.array(timing_dict['capture'])[1:]
 network_time = np.array(timing_dict['frame_time'])[1:]
 setup_time = np.array(timing_dict['setup'])[1:]
 postproc_time = np.array(timing_dict['post_processing'])[1:]
-viz_time = np.array(timing_dict['visualization'])[1:]
+#viz_time = np.array(timing_dict['visualization'])[1:]
 
-frame = np.arange(TOTAL_ITERS)
+frame = np.arange(TOTAL_ITERS - 1)
+
+print(capture_time.shape)
+print(network_time.shape)
+print(setup_time.shape)
+print(postproc_time.shape)
+#print(viz_time.shape)
+print(frame.shape)
 """
 create_ds_time = np.array(timing_dict['setup_inner']['create-dataset'] + [0] * (TOTAL_ITERS - 1))
 batch_time = np.array(timing_dict['setup_inner']['batching'] + [0] * (TOTAL_ITERS - 1))
@@ -35,8 +42,7 @@ plt.bar(frame, capture_time, label = 'Image Capturing')
 plt.bar(frame, setup_time, bottom = capture_time, label = 'Loading and Transferring')
 plt.bar(frame, network_time, bottom = capture_time + setup_time, label = 'In Network')
 plt.bar(frame, postproc_time, bottom = capture_time + setup_time + network_time, label = 'Post-Processing')
-plt.bar(frame, viz_time, bottom = capture_time + setup_time + network_time + postproc_time, label = 'Visualization (Matplotlib)')
-
+#plt.bar(frame, viz_time, bottom = capture_time + setup_time + network_time + postproc_time, label = 'Visualization (Matplotlib)')
 plt.legend(title = 'MCAM-Reconstruction Loop Subroutines', ncol = 1, loc = 'upper center')
 plt.xlabel('Frame Number')
 plt.ylabel('Time per Iteration (in Seconds)')

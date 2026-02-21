@@ -47,9 +47,13 @@ class FSDataset(Dataset):
         self.downsample = downsample
         self.frame_number = frame_number
         
+        # identify the reference camera, which should be provided in every batch
+        # and get the extra needed map
+        reference_camera_num = load_dictionary(calibration_filename)["reference_camera"]
+
         #torch.cuda.synchronize()
         #prep_start = time.perf_counter()
-        images = self.prep_images(noise)
+        images = self.prep_images(reference_camera_num, noise)
         #torch.cuda.synchronize()
         #prep_end = time.perf_counter()
         #timing_dict['swap_frames_info']['image-prep'] = [prep_end - prep_start]
@@ -66,10 +70,6 @@ class FSDataset(Dataset):
         inv_inter_camera_maps = generate_normalized_shift_maps(
             calibration_filename, type="inv_inter_camera", image_shape=images.shape[1:3],
             image_numbers=image_numbers)
-
-        # identify the reference camera, which should be provided in every batch
-        # and get the extra needed map
-        reference_camera_num = load_dictionary(calibration_filename)["reference_camera"]
 
         # and load the additional needed map for the reference camera
         ref_camera_shift_slopes = generate_normalized_shift_maps(
@@ -298,7 +298,7 @@ class FSDataset(Dataset):
             "masks": self.masks, 
         }
 
-    def prep_images(self, noise=[0,0]):
+    def prep_images(self, reference_no, noise=[0,0]):
         if 'prep_info' not in self.timing_dict:
             self.timing_dict['prep_info'] = {
                 'load' : [],
@@ -314,7 +314,8 @@ class FSDataset(Dataset):
                 images = load_from_single_image(self.image_filename,
                                                     self.calibration_filename)
             else: 
-                images = load_image_set(
+                reference_image, images = load_image_set(
+                    reference_no,
                     filename=self.image_filename,
                     image_numbers=self.image_numbers.tolist(),
                     downsample=self.downsample,
@@ -324,7 +325,8 @@ class FSDataset(Dataset):
                 )
         else:
             # proceeds here
-            images = load_image_set(
+            reference_image, images = load_image_set(
+                reference_no,
                 images = self.sample,
                 image_numbers=self.image_numbers.tolist(),
                 downsample=self.downsample,
@@ -363,6 +365,7 @@ class FSDataset(Dataset):
         #torch.cuda.synchronize()
         #end_copy = time.perf_counter()
         #self.timing_dict['prep_info']['copy'].append(end_copy - start_copy)
+        self.colored_ref = reference_image
         return images
 
     # this could easily be modified to allow for switching image sets
@@ -375,7 +378,7 @@ class FSDataset(Dataset):
 
         #torch.cuda.synchronize()
         #start_prep_img = time.perf_counter()
-        images = self.prep_images()
+        images = self.prep_images(self.reference_camera)
         #torch.cuda.synchronize()
         #end_prep_img = time.perf_counter()
         #self.timing_dict['swap_frames_info']['image-prep'].append(end_prep_img - start_prep_img)
