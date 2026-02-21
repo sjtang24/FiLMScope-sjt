@@ -63,27 +63,27 @@ def recontruct_depth():
 
     depths = outputs["depth"].detach()
 
-    depth_upsampled = F.interpolate(
+    depths = F.interpolate(
         depths.unsqueeze(0),
         scale_factor = DOWNSAMPLING,
         mode = 'bilinear',
         align_corners = True
     )
 
-
     gauss = computed_data['gauss_kernel']
     kernel_size = gauss.shape[0]
     pad_s = (kernel_size - 1) // 2
     pad_e = (kernel_size - 1) - pad_s
   
-    depth_upsampled = F.pad(depth_upsampled, (pad_s, pad_e, 0, 0))
-    d_horz = F.conv2d(depth_upsampled, gauss.view(1, 1, 1, kernel_size))
-    d_horz = F.pad(d_horz, (0, 0, pad_s, pad_e))
-    d_vert = F.conv2d(d_horz, gauss.view(1, 1, kernel_size, 1))
+    depths = F.pad(depths, (pad_s, pad_e, 0, 0))
+    depths = F.conv2d(depths, gauss.view(1, 1, 1, kernel_size))
+    depths = F.pad(depths, (0, 0, pad_s, pad_e))
+    depths = F.conv2d(depths, gauss.view(1, 1, kernel_size, 1))
 
-    depth = d_vert.squeeze(0).squeeze(0).cpu().numpy()  
+    depths = depths.squeeze(0).squeeze(0).cpu().numpy()  
     sx, ex, sy, ey = computed_data['cropping_info']
-    computed_data['depth'] = depth[sy:ey, sx:ex]
+    computed_data['depth'] = depths[sy:ey, sx:ex]
+    torch.cuda.synchronize()
 
 def demosaic(): 
     global computed_data
@@ -94,6 +94,7 @@ def demosaic():
 
 def animate():
     global computed_data, canvas, geometry, texture
+    torch.cuda.synchronize()
     geometry.positions.data[:, 2] = np.flipud(computed_data['depth'])[y, x] * 150
     geometry.positions.update_range(0, geometry.positions.data.shape[0])
     texture.set_data(computed_data['reference'])
@@ -178,12 +179,12 @@ config_dict = generate_config_dict(
     crop_values = CROP_VALUES
 )
 
-computed_data = {'frame' : 0, 'reference' : None, 'depth' : None, 'run_manager' : None, 'gauss_kernel' : gaussian_kernel(11),
+computed_data = {'frame' : 0, 'reference' : None, 'depth' : None, 'run_manager' : None, 'gauss_kernel' : gaussian_kernel(7),
                  'config_dict' : config_dict, 'camera_array' : camera_array, 'mcam' : mcam, 'cropping_info' : None}
 
 filmscope_loop()
 scene = gfx.Scene()
-scene.add(gfx.AmbientLight())
+scene.add(gfx.AmbientLight(intensity = 5))
 scene.add(gfx.DirectionalLight())
 
 camera = gfx.PerspectiveCamera(70, 16/9)
