@@ -24,21 +24,26 @@ from concurrent.futures import ThreadPoolExecutor
 
 os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 CROP_VALUES = (0.0, 1.0, 0.0, 1.0)
-N_ITERATIONS = 100
-DEPTH_RANGE = (-5, 5)
+N_ITERATIONS = 150
+DEPTH_RANGE = (-15, -5)
 N_CAMERAS_X = 8
 N_CAMERAS_Y = 6
-DOWNSAMPLING = 8
+DOWNSAMPLING = 4
 CAMERA_ARRANGEMENT = [13, 14, 15, 16, 19, 20, 21, 22, 25, 26, 27, 28, 31, 32, 33, 34]
 WARMUP_ITERATIONS = 150
 ITERATIONS = 1
-CALLIBRATION_FILE = 'data/phantom/calibration_information'
+CALLIBRATION_FILE = 'data/calibration_information'
 CROPPING_XE = 1024
 CROPPING_YE = 64
 CROPPING_XS = 256
 CROPPING_YS = 64
+LOWLIGHT_TEST_MS = 150e-3
+LOWLIGHT_TEST = True
+TEST = False
 #FILTER_SIZE = (1, 5)
-
+dlock = threading.Lock()
+TIME_REFRESH_RATE = False
+TIME_RECONSTRUCTION_RATE = False
 
 def gaussian_kernel(size, sigma = 1, device = 'cuda:0'):
     x = torch.arange(size, device = device) - size // 2
@@ -47,20 +52,21 @@ def gaussian_kernel(size, sigma = 1, device = 'cuda:0'):
 
 
 def recontruct_depth():
-    global computed_data
-    run_manager = computed_data['run_manager']
-    config_dict = computed_data['config_dict']
-    iters = config_dict["run_args"]["iters"] if computed_data['frame'] == 0 else ITERATIONS
+    global saved_data, computed_data
+    '''torch.cuda.synchronize()
+    d_s = time.perf_counter()'''
+    frame_no = computed_data['frame']
+    run_manager = computed_data['run_manager'] # safe because only modified sequentially between reconstruct and init/swap
+    config_dict = saved_data['config_dict']
+    iters = config_dict["run_args"]["iters"] if frame_no == 0 else ITERATIONS
 
-    for j in range(iters):
+    for j in tqdm(range(iters), disable=(not TEST)):
         log = (j % config_dict["run_args"]["display_freq"] == 0) or (j == iters - 1)
  
-        _, _, _, outputs, _ = run_manager.run_epoch(
+        _, _, _, outputs, loss = run_manager.run_epoch(
             j, log=(log and config_dict["use_neptune"])
         )
-        if j != iters - 1:
-            continue
-
+        
     depths = outputs["depth"].detach()
 
     depths = F.interpolate(
@@ -70,49 +76,69 @@ def recontruct_depth():
         align_corners = True
     )
 
-    gauss = computed_data['gauss_kernel']
-    kernel_size = gauss.shape[0]
-    pad_s = (kernel_size - 1) // 2
-    pad_e = (kernel_size - 1) - pad_s
-  
-    depths = F.pad(depths, (pad_s, pad_e, 0, 0))
-    depths = F.conv2d(depths, gauss.view(1, 1, 1, kernel_size))
-    depths = F.pad(depths, (0, 0, pad_s, pad_e))
-    depths = F.conv2d(depths, gauss.view(1, 1, kernel_size, 1))
-
     depths = depths.squeeze(0).squeeze(0).cpu().numpy()  
-    sx, ex, sy, ey = computed_data['cropping_info']
-    computed_data['depth'] = depths[sy:ey, sx:ex]
-    torch.cuda.synchronize()
+    sx, ex, sy, ey = saved_data['cropping_info']
+    depths =  depths[sy:ey, sx:ex]
+    '''torch.cuda.synchronize()
+    d_e = time.perf_counter()
+    print(f'Depth Reconstruction Time: {d_e - d_s}')'''
+    return depths
 
-def demosaic(): 
-    global computed_data
-    run_manager = computed_data['run_manager']
-    color_ref = cv2.cvtColor(run_manager.dataset.colored_ref, cv2.COLOR_BAYER_RG2RGB)
-    sx, ex, sy, ey = computed_data['cropping_info']
-    computed_data['reference'] = color_ref[sy:ey, sx:ex]
+def demosaic(colored_ref): 
+    global saved_data
+    '''torch.cuda.synchronize()
+    dem_s = time.perf_counter()'''
+    cref = np.rot90(colored_ref, k = 1)
+    color_ref = cv2.cvtColor(cref, cv2.COLOR_BAYER_RG2RGB)
+    sx, ex, sy, ey = saved_data['cropping_info']
+    ref = color_ref[sy:ey, sx:ex]
+    '''dem_e = time.perf_counter()
+    print(f'Demosaicing Time: {dem_e - dem_s}')'''
+    return ref
 
 def animate():
     global computed_data, canvas, geometry, texture
-    torch.cuda.synchronize()
-    geometry.positions.data[:, 2] = np.flipud(computed_data['depth'])[y, x] * 150
-    geometry.positions.update_range(0, geometry.positions.data.shape[0])
-    texture.set_data(computed_data['reference'])
+
+    if TIME_REFRESH_RATE:
+        global last_frame_time
+        curr_time = time.perf_counter()
+        duration = curr_time - last_frame_time
+        print(duration)
+        last_frame_time = curr_time
+
+    if dlock.acquire(blocking = False):
+        try:
+            if computed_data['new_data']:
+                geometry.positions.data[:, 2] = np.flipud(computed_data['depth'])[y, x] * 150
+                geometry.positions.update_range(0, geometry.positions.data.shape[0])
+                texture.set_data(computed_data['reference'])
+                computed_data['new_data'] = False
+        finally:
+            dlock.release()
+    
 
 def filmscope_loop():
-    global computed_data, canvas
-    mcam = computed_data['mcam']
-    camera_array = computed_data['camera_array']
-    config_dict = computed_data['config_dict']
+    global saved_data, computed_data, canvas
+    mcam = saved_data['mcam']
+    camera_array = saved_data['camera_array']
+    config_dict = saved_data['config_dict']
+
     iters = N_ITERATIONS - 1 if computed_data['frame'] > 0 else 1
     for _ in range(iters):
-        # 0.073
+        if TIME_RECONSTRUCTION_RATE:
+            s_acq = time.perf_counter()
+
         dset = mcam.acquire_selection(camera_array)
-        
-        # 0.052
+
+        if TIME_RECONSTRUCTION_RATE:
+            e_acq = time.perf_counter()
+            acq_dur = e_acq - s_acq
+            s_vol = time.perf_counter()
+
         if computed_data['frame'] == 0: #initialize run manager
+            # doesn't matter if run_manager will cause race conditions because 
+            # we exclusively run swap/init or perform the reconstruction
             run_manager = RunManager(
-                {},
                 config_dict, 
                 sample = dset, 
                 calibration_file=CALLIBRATION_FILE
@@ -128,32 +154,52 @@ def filmscope_loop():
             sx, sy = startx * DOWNSAMPLING + CROPPING_XS, starty * DOWNSAMPLING + CROPPING_YS
             ex, ey = endx * DOWNSAMPLING - CROPPING_XE, endy * DOWNSAMPLING - CROPPING_YE
             computed_data['run_manager'] = run_manager
-            computed_data['cropping_info'] = (sx, ex, sy, ey)
+            saved_data['cropping_info'] = (sx, ex, sy, ey)
+
         else:
             computed_data['run_manager'].swap_frames(sample_image=dset)
 
-        # 0.27 seconds 
+        if TIME_RECONSTRUCTION_RATE:
+            torch.cuda.synchronize()
+            e_vol = time.perf_counter()
+            vol_dur = e_vol - s_vol
+            s_recon = time.perf_counter()
+        
+        colored_ref = computed_data['run_manager'].dataset.colored_ref
+
         # To obtain the colored image, we perform demosaicing (another experiment
         # where demosaic vs no-demosaic) in parallel with 3d reconstruction
         # This shaves about 0.04 seconds
         with ThreadPoolExecutor(max_workers = 2) as parallel_ex:
             heightmap_op = parallel_ex.submit(recontruct_depth)
-            color_img_op = parallel_ex.submit(demosaic)
+            color_img_op = parallel_ex.submit(demosaic, colored_ref)
 
-            heightmap_op.result()
-            color_img_op.result()
+            depths = heightmap_op.result()
+            refs = color_img_op.result()
 
-        computed_data['frame'] += 1    
+        with dlock:
+            computed_data['depth'] = depths
+            computed_data['reference'] = refs
+            computed_data['new_data'] = True
+            computed_data['frame'] += 1 
+
+        if TIME_RECONSTRUCTION_RATE:
+            torch.cuda.synchronize()
+            e_recon = time.perf_counter()
+            recon_dur = e_recon - s_recon
+            latency = acq_dur + vol_dur + recon_dur
+            throughput = 1 / latency
+            print(f'Frame #{computed_data['frame']} | ACQ: {acq_dur} + VOL: {vol_dur} + RECON: {recon_dur} | Throughput: {throughput} | Latency : {latency}')
 
     if computed_data['frame'] >= N_ITERATIONS:
         computed_data['run_manager'].end()
         mcam.close()
         QMetaObject.invokeMethod(canvas, 'close', Qt.QueuedConnection)
-        print('Falafel: killing the FiLMScope loop thread successfully...')
+        print('Light Fury: killing the FiLMScope loop thread successfully...')
 
 # Script
 mcam = MCAM()
-mcam.exposure = 1e-3
+mcam.exposure = 1e-3 if not LOWLIGHT_TEST else LOWLIGHT_TEST_MS
 # specify cameras from array to include
 camera_array = np.zeros((N_CAMERAS_X, N_CAMERAS_Y), dtype = bool)
 camera_array[2:-2, 1:-1] = True
@@ -179,10 +225,25 @@ config_dict = generate_config_dict(
     crop_values = CROP_VALUES
 )
 
-computed_data = {'frame' : 0, 'reference' : None, 'depth' : None, 'run_manager' : None, 'gauss_kernel' : gaussian_kernel(7),
-                 'config_dict' : config_dict, 'camera_array' : camera_array, 'mcam' : mcam, 'cropping_info' : None}
+saved_data = {
+    'gauss_kernel' : gaussian_kernel(7),
+    'config_dict' : config_dict, 
+    'camera_array' : camera_array, 
+    'mcam' : mcam, 
+    'cropping_info' : None,
+}
+
+computed_data = {
+    'frame' : 0, 
+    'reference' : None, 
+    'depth' : None, 
+    'run_manager' : None,
+    'new_data' : False
+}
 
 filmscope_loop()
+if TIME_REFRESH_RATE:
+    last_frame_time = time.perf_counter()
 scene = gfx.Scene()
 scene.add(gfx.AmbientLight(intensity = 5))
 scene.add(gfx.DirectionalLight())

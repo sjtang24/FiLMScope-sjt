@@ -13,7 +13,6 @@ from filmscope.recon_util.base_warp_functions import generate_base_grid
 class FSDataset(Dataset):
     def __init__(
         self,
-        timing_dict,
         calibration_filename,
         image_numbers,
         image_filename = None, sample = None,
@@ -33,8 +32,6 @@ class FSDataset(Dataset):
         ensure_grayscale=True,
         noise=[0, 0], # mean, std 
     ):
-        self.timing_dict = timing_dict
-        self.timing_dict['swap_frames_info'] = {}
         self.is_single_image = len(load_dictionary(calibration_filename)["crop_indices"]) != 0
         self.calibration_filename = calibration_filename
         self.ensure_grayscale = ensure_grayscale
@@ -56,7 +53,6 @@ class FSDataset(Dataset):
         images = self.prep_images(reference_camera_num, noise)
         #torch.cuda.synchronize()
         #prep_end = time.perf_counter()
-        #timing_dict['swap_frames_info']['image-prep'] = [prep_end - prep_start]
 
         #torch.cuda.synchronize()
         #start_cropping = time.perf_counter()
@@ -252,7 +248,6 @@ class FSDataset(Dataset):
         self.images = images.permute([0, 3, 1, 2]).to(torch.float32)
         #torch.cuda.synchronize()
         #end_cropping = time.perf_counter()
-        #self.timing_dict['swap_frames_info']['image-crop'] = [end_cropping - start_cropping]
         self.warped_shift_slope_maps = warped_shift_slope_maps
         self.inv_inter_camera_maps = inv_inter_camera_maps
         self.reference_camera = reference_camera_num
@@ -299,11 +294,6 @@ class FSDataset(Dataset):
         }
 
     def prep_images(self, reference_no, noise=[0,0]):
-        if 'prep_info' not in self.timing_dict:
-            self.timing_dict['prep_info'] = {
-                'load' : [],
-                'copy' : [] 
-            } 
 
         #torch.cuda.synchronize()
         #start_load = time.perf_counter()
@@ -359,6 +349,7 @@ class FSDataset(Dataset):
         images = np.stack([image if len(image.shape) == 3 else image[:, :, None] for image in images], 
                     dtype=np.float32)
         images = torch.from_numpy(images).to("cuda", non_blocking=True)
+        images = torch.rot90(images, k = 1, dims = (1, 2))
         noise = torch.rand_like(images) * noise[0] + noise[1]
         images = images + noise 
         images = torch.clamp(images, 0, 255)

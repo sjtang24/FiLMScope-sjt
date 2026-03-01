@@ -117,7 +117,7 @@ def load_image_set(reference_no, images = None, filename=None, image_numbers=Non
         single_image = dataset.sel(image_y=y_cam, image_x=x_cam)
 
         single_image = single_image.images.data
-        single_image = np.rot90(single_image, k = 1)
+        #single_image = np.rot90(single_image, k = 1)
 
         if number == reference_no:
             reference_image = single_image

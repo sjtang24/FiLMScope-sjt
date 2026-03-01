@@ -11,13 +11,11 @@ import torch.optim as optim
 import time 
 
 class RunManager:
-    def __init__(self, timing_dict, config_dict, sample=None, calibration_file=None, guide_map=None,
+    def __init__(self, config_dict, sample=None, calibration_file=None, guide_map=None,
                  prev_model=None, global_mask=None, run_name=None):
         # sample should be the xarray passed in by the mcam loop
         self.run_name = run_name
         self.config_dict = config_dict
-        self.timing_dict = timing_dict
-        self.timing_dict['setup_inner'] = {}
         self.run_args = config_dict["run_args"]
         self.info = config_dict["sample_info"]
         self.loss_w = config_dict["loss_weights"]
@@ -73,7 +71,6 @@ class RunManager:
         #torch.cuda.synchronize()
         #start_load = time.perf_counter()
         self.dataset = FSDataset(
-            self.timing_dict,
             calibration_file, #path_to_data + self.info["calibration_filename"],
             self.info["image_numbers"],
             sample = sample, image_filename=image_filename, #path_to_data + self.info["image_filename"]
@@ -87,7 +84,6 @@ class RunManager:
         )
         #torch.cuda.synchronize()
         #end_load = time.perf_counter()
-        #self.timing_dict['setup_inner']['create-dataset'] = [end_load - start_load]
 
         #torch.cuda.synchronize()
         #start_dler = time.perf_counter()
@@ -102,7 +98,6 @@ class RunManager:
         )
         #torch.cuda.synchronize()
         #end_dler = time.perf_counter()
-        #self.timing_dict['setup_inner']['batching'] = [end_dler - start_dler]
 
         #torch.cuda.synchronize()
         #start_transfer = time.perf_counter()
@@ -123,7 +118,6 @@ class RunManager:
         self.prepare_volume()
         #torch.cuda.synchronize()
         #end_prepvolume = time.perf_counter()
-        #self.timing_dict['setup_inner']['prep-volume'] = end_prepvolume - start_prepvolume
         
         #torch.cuda.synchronize()
         #start_transfer1 = time.perf_counter()
@@ -131,7 +125,6 @@ class RunManager:
         #torch.cuda.synchronize()  # Ensure GPU is done
         #end_transfer1 = time.perf_counter()
         #transfer_duration += (end_transfer1 - start_transfer1)
-        #self.timing_dict['setup_inner']['transfer-gpu'] = transfer_duration
 
         self.logger = None
         if config_dict["use_neptune"]:
@@ -170,14 +163,6 @@ class RunManager:
     # TODO: create a new function to pass in an xarray
 
     def swap_frames(self, frame_number = -1, sample_image = None):
-        if 'swap_info' not in self.timing_dict:
-            self.timing_dict['swap_info'] = {
-                'transfer-cpu' : [],
-                'transfer-gpu' : [],
-                'swap-frames' : [],
-                'prep-volume' : []
-            }
-
         self.run_args["frame_number"] = frame_number
 
         # not sure why this is necessary
@@ -188,16 +173,13 @@ class RunManager:
         #self.dataset.to_device("cpu")
         #torch.cuda.synchronize()
         #end_cpu_transfer = time.perf_counter()
-        #self.timing_dict['swap_info']['transfer-cpu'].append(end_cpu_transfer - start_cpu_transfer)
 
         #torch.cuda.synchronize()
         #start_swap = time.perf_counter()
         self.dataset.swap_frames(frame_number = frame_number, sample_image = sample_image)
         #torch.cuda.synchronize()
         #end_swap = time.perf_counter()
-        #self.timing_dict['swap_info']['swap-frames'].append(end_swap - start_swap)
 
-        #self.timing_dict = self.dataset.timing_dict
 
         #torch.cuda.synchronize()
         #start_gpu_transfer = time.perf_counter()
@@ -211,7 +193,6 @@ class RunManager:
         self.prepare_volume()
         #torch.cuda.synchronize()
         #end_prepvol = time.perf_counter()
-        #self.timing_dict['swap_info']['prep-volume'].append(end_prepvol - start_prepvol)
 
         #torch.cuda.synchronize()
         #start_gpu_transfer2 = time.perf_counter()
@@ -219,7 +200,6 @@ class RunManager:
         #torch.cuda.synchronize()  # Ensure GPU is done
         #end_gpu_transfer2 = time.perf_counter()
         #gpu_transfer_time += (end_gpu_transfer2 - start_gpu_transfer2)
-        #self.timing_dict['swap_info']['transfer-gpu'].append(gpu_transfer_time)
 
         if self.config_dict["use_neptune"]:
             self.setup_logger()
