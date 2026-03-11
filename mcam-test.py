@@ -20,30 +20,34 @@ from rendercanvas.auto import RenderCanvas
 from PySide6.QtCore import QMetaObject, Qt
 import threading 
 from concurrent.futures import ThreadPoolExecutor
+import csv
 
 
 os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 CROP_VALUES = (0.0, 1.0, 0.0, 1.0)
-N_ITERATIONS = 150
+N_ITERATIONS = 60
 DEPTH_RANGE = (-15, -5)
 N_CAMERAS_X = 8
 N_CAMERAS_Y = 6
-DOWNSAMPLING = 4
+BINNING = 4
+DOWNSAMPLING = 2
+DOWNSAMPLING_AND_BINNING = BINNING * DOWNSAMPLING
 CAMERA_ARRANGEMENT = [13, 14, 15, 16, 19, 20, 21, 22, 25, 26, 27, 28, 31, 32, 33, 34]
-WARMUP_ITERATIONS = 150
+WARMUP_ITERATIONS = 1
 ITERATIONS = 1
 CALLIBRATION_FILE = 'data/calibration_information'
-CROPPING_XE = 1024
-CROPPING_YE = 64
-CROPPING_XS = 256
-CROPPING_YS = 64
-LOWLIGHT_TEST_MS = 150e-3
+CROPPING_XE = 128
+CROPPING_YE = 128
+CROPPING_XS = 128
+CROPPING_YS = 128
+LOWLIGHT_TEST_MS = 1e-3
 LOWLIGHT_TEST = True
 TEST = False
+EXAG = 25
 #FILTER_SIZE = (1, 5)
 dlock = threading.Lock()
 TIME_REFRESH_RATE = False
-TIME_RECONSTRUCTION_RATE = False
+TIME_RECONSTRUCTION_RATE = True
 
 def gaussian_kernel(size, sigma = 1, device = 'cuda:0'):
     x = torch.arange(size, device = device) - size // 2
@@ -68,6 +72,10 @@ def recontruct_depth():
         )
         
     depths = outputs["depth"].detach()
+    sx, ex, sy, ey = saved_data['depth_crops']
+    psx, pex, psy, pey = saved_data['post_crops']
+
+    depths = depths[:, sx:ex, sy:ey]
 
     depths = F.interpolate(
         depths.unsqueeze(0),
@@ -76,9 +84,7 @@ def recontruct_depth():
         align_corners = True
     )
 
-    depths = depths.squeeze(0).squeeze(0).cpu().numpy()  
-    sx, ex, sy, ey = saved_data['cropping_info']
-    depths =  depths[sy:ey, sx:ex]
+    depths = depths.squeeze(0).squeeze(0).cpu().numpy()[psx:pex, psy:pey] 
     '''torch.cuda.synchronize()
     d_e = time.perf_counter()
     print(f'Depth Reconstruction Time: {d_e - d_s}')'''
@@ -90,8 +96,10 @@ def demosaic(colored_ref):
     dem_s = time.perf_counter()'''
     cref = np.rot90(colored_ref, k = 1)
     color_ref = cv2.cvtColor(cref, cv2.COLOR_BAYER_RG2RGB)
-    sx, ex, sy, ey = saved_data['cropping_info']
-    ref = color_ref[sy:ey, sx:ex]
+    sx, ex, sy, ey = saved_data['pre_crop_info']
+    psx, pex, psy, pey = saved_data['post_crops']
+    ref = color_ref[sx:ex, sy:ey][psx:pex, psy:pey]
+   
     '''dem_e = time.perf_counter()
     print(f'Demosaicing Time: {dem_e - dem_s}')'''
     return ref
@@ -103,13 +111,13 @@ def animate():
         global last_frame_time
         curr_time = time.perf_counter()
         duration = curr_time - last_frame_time
-        print(duration)
+        print(1 / duration)
         last_frame_time = curr_time
 
     if dlock.acquire(blocking = False):
         try:
             if computed_data['new_data']:
-                geometry.positions.data[:, 2] = np.flipud(computed_data['depth'])[y, x] * 150
+                geometry.positions.data[:, 2] = np.flipud(computed_data['depth'])[y, x] * EXAG
                 geometry.positions.update_range(0, geometry.positions.data.shape[0])
                 texture.set_data(computed_data['reference'])
                 computed_data['new_data'] = False
@@ -144,17 +152,22 @@ def filmscope_loop():
                 calibration_file=CALLIBRATION_FILE
             )
 
-            indices = run_manager.dataset.full_crops[run_manager.dataset.reference_camera]
+            startx, endx, starty, endy = run_manager.dataset.pre_crops[run_manager.dataset.reference_camera]
+            sx, sy = startx * DOWNSAMPLING, starty * DOWNSAMPLING
+            ex, ey = (endx + 1) * DOWNSAMPLING, (endy + 1) * DOWNSAMPLING
 
-            startx, endx, starty, endy = tuple([
-                -crop_coords if crop_coords < 0 else crop_coords
-                for crop_coords in indices
-            ])
+            saved_data['pre_crop_info'] = (sx, ex, sy, ey)
 
-            sx, sy = startx * DOWNSAMPLING + CROPPING_XS, starty * DOWNSAMPLING + CROPPING_YS
-            ex, ey = endx * DOWNSAMPLING - CROPPING_XE, endy * DOWNSAMPLING - CROPPING_YE
+            startxp, endxp, startyp, endyp = run_manager.dataset.depth_crops[run_manager.dataset.reference_camera]
+
+            if endyp < 0:
+                endyp = endy - (endyp if endyp == -1 else endyp - 1)
+            if endxp < 0:
+                endxp = endx - (endxp if endxp == -1 else endxp - 1)
+
+            saved_data['depth_crops'] = (startxp, endxp, startyp, endyp)
+            saved_data['post_crops'] = (CROPPING_XS, -CROPPING_XE, CROPPING_YS, -CROPPING_YS)
             computed_data['run_manager'] = run_manager
-            saved_data['cropping_info'] = (sx, ex, sy, ey)
 
         else:
             computed_data['run_manager'].swap_frames(sample_image=dset)
@@ -166,6 +179,7 @@ def filmscope_loop():
             s_recon = time.perf_counter()
         
         colored_ref = computed_data['run_manager'].dataset.colored_ref
+
 
         # To obtain the colored image, we perform demosaicing (another experiment
         # where demosaic vs no-demosaic) in parallel with 3d reconstruction
@@ -183,13 +197,22 @@ def filmscope_loop():
             computed_data['new_data'] = True
             computed_data['frame'] += 1 
 
+
         if TIME_RECONSTRUCTION_RATE:
             torch.cuda.synchronize()
             e_recon = time.perf_counter()
             recon_dur = e_recon - s_recon
             latency = acq_dur + vol_dur + recon_dur
             throughput = 1 / latency
-            print(f'Frame #{computed_data['frame']} | ACQ: {acq_dur} + VOL: {vol_dur} + RECON: {recon_dur} | Throughput: {throughput} | Latency : {latency}')
+            with open(filename, mode='a', newline='') as file:
+                writer = csv.writer(file)
+                
+                if os.stat(filename).st_size == 0:
+                    writer.writerow(headers)
+
+                if computed_data['frame'] > 0:
+                    new_row = [BINNING, DOWNSAMPLING, acq_dur, vol_dur, recon_dur, throughput, latency]
+                    writer.writerow(new_row)
 
     if computed_data['frame'] >= N_ITERATIONS:
         computed_data['run_manager'].end()
@@ -200,12 +223,15 @@ def filmscope_loop():
 # Script
 mcam = MCAM()
 mcam.exposure = 1e-3 if not LOWLIGHT_TEST else LOWLIGHT_TEST_MS
+mcam.bin_mode = BINNING
+mcam.digital_gain_color = [1, 1, 1]   # RGB
+mcam.analog_gain = 1
 # specify cameras from array to include
 camera_array = np.zeros((N_CAMERAS_X, N_CAMERAS_Y), dtype = bool)
 camera_array[2:-2, 1:-1] = True
 #median_unfold = nn.Unfold(kernel_size = FILTER_SIZE)
-
-
+headers = ['binning', 'subsampling', 'acq', 'vol', 'recon', 'throughput', 'latency']
+filename = 'timing.csv'
 # loop would start here, and can be used in the algorithm 
 config_dict = generate_config_dict(
     gpu_number = '0', downsample = DOWNSAMPLING, 
@@ -242,14 +268,20 @@ computed_data = {
 }
 
 filmscope_loop()
+H, W, _ = computed_data['reference'].shape
+
+'''plt.imshow(computed_data['depth'], cmap = 'turbo')
+plt.colorbar()
+plt.show()
+'''
 if TIME_REFRESH_RATE:
     last_frame_time = time.perf_counter()
+
 scene = gfx.Scene()
 scene.add(gfx.AmbientLight(intensity = 5))
 scene.add(gfx.DirectionalLight())
 
 camera = gfx.PerspectiveCamera(70, 16/9)
-H, W, _ = computed_data['reference'].shape
 geometry = gfx.plane_geometry(width = W, height = H, width_segments = W - 1, height_segments = H - 1)   
 texture = gfx.Texture(computed_data['reference'], dim = 2)
 material = gfx.MeshPhongMaterial(map = texture)
@@ -261,6 +293,37 @@ y = np.clip(np.round(y + np.abs(np.min(np.round(y)))).astype(int), 0, H - 1)
 mesh = gfx.Mesh(geometry, material)
 mesh.local.position = (0, 0, 0)
 scene.add(mesh)
+
+scene.add(gfx.AmbientLight())
+scene.add(gfx.DirectionalLight())
+
+plane_size = max(W, H)
+plane_geometry = gfx.plane_geometry(min(W, H), plane_size)
+plane_xy = gfx.Mesh(plane_geometry, gfx.MeshBasicMaterial(color=(1, 0, 0, 0.15), side="both"))
+#plane_yz = gfx.Mesh(plane_geometry, gfx.MeshBasicMaterial(color=(0, 1, 0, 0.15), side="both"))
+#plane_xz = gfx.Mesh(plane_geometry, gfx.MeshBasicMaterial(color=(0, 0, 1, 0.15), side="both"))
+
+#plane_xz.local.rotation = la.quat_from_euler((-np.pi / 2, 0, 0))
+#plane_yz.local.rotation = la.quat_from_euler((0, -np.pi / 2, 0))
+#plane_xz.local.position = (0, H / 2, 0)
+#plane_yz.local.position = (-W / 2, 0, 0)
+scene.add(plane_xy) #, plane_xz, plane_yz)
+LENGTH = max(W, H)
+MIN_L = min(W, H)
+axis_positions = np.array(
+    [[-MIN_L / 2, -LENGTH / 2, -LENGTH / 2], [MIN_L / 2, -LENGTH / 2, -LENGTH / 2],   # X
+     [-MIN_L / 2, -LENGTH / 2, -LENGTH / 2], [-MIN_L / 2, LENGTH / 2, -LENGTH / 2],   # Y
+     [-MIN_L / 2, -LENGTH / 2, -LENGTH / 2], [-MIN_L/ 2, -LENGTH / 2, LENGTH / 2],   # Z
+    ], dtype=np.float32)
+
+axis_colors = np.array([
+    [1,0,0,1],[1,0,0,1],
+    [0,1,0,1],[0,1,0,1],
+    [0,0,1,1],[0,0,1,1],
+], dtype=np.float32)
+
+geom = gfx.Geometry(positions=axis_positions, colors=axis_colors)
+scene.add(gfx.Line(geom, gfx.LineSegmentMaterial(thickness=3)))
 
 compute_thread = threading.Thread(target = filmscope_loop, daemon=True)
 compute_thread.start()

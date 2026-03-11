@@ -135,6 +135,8 @@ class FSDataset(Dataset):
         # adjust inter camera maps based on individual crops, if necessary
         else:
             self.full_crops = {}
+            self.pre_crops = {}
+            self.depth_crops = {}
             self.map_crops = {}
             ref_center = crop_centers[reference_camera_num]
 
@@ -208,10 +210,14 @@ class FSDataset(Dataset):
                     endy = endy - starty
 
                 crop_images[i, startx2 - startx:endx, starty2 - starty:endy] = images[i, startx2:endx2, starty2:endy2]
+               
                 masks[i, :, :starty2 - starty] = 0
                 masks[i, :, endy:] = 0
                 masks[i, :startx2 - startx, :] = 0
                 masks[i, endx:, :] = 0
+
+                self.depth_crops[image_number] = [startx2 - startx, endx, starty2 - starty, endy]
+                self.pre_crops[image_number] = [startx2, endx2, starty2, endy2]
 
                 crop_iis_maps[i] = crop_maps(
                     inv_inter_camera_maps[i][None],
