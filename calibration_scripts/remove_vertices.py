@@ -6,13 +6,14 @@ import numpy as np
 from matplotlib import pyplot as plt
 import cv2
 import os
-
+import sys
+sys.path.append('/home/steven/Documents/FiLMScope-sjt') 
 from filmscope.util import load_graph_images
 from filmscope.config import path_to_data
 from filmscope.calibration import CalibrationInfoManager
 
 # path location of calibration dataset
-image_folder = path_to_data + "/calibration_data"
+image_folder = path_to_data + "/calibration_info"
 
 # set "current_plane" and "current_camera_index" to values other than 0
 # to start with plane/image other than the first one
@@ -25,12 +26,12 @@ current_image = None
 
 # if example_only is True, 
 # this will use the example calibration filename and not save deleted vertices
-example_only = True
+example_only = False
 if example_only:
     calibration_filename = image_folder + '/calibration_information_example'
 else:
     calibration_filename = image_folder + '/calibration_information'
-
+print(calibration_filename)
 assert os.path.exists(calibration_filename)
 
 # finish setup  

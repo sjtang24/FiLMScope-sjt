@@ -106,6 +106,7 @@ class CalibrationInfoManager(metaclass=PropertyDictMeta):
     # this is using the identifed vertices to identify
     # which image numbers were used in calibration
     def image_numbers(self):
+        print(self.plane_numbers)
         plane0 = self.plane_numbers[0] 
         vert_dict = self.all_vertices[plane0]
         return [i for i in vert_dict]

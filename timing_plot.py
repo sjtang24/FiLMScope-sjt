@@ -11,6 +11,9 @@ df['config'] = (
 )
 print(df)
 summary_stats = df.groupby(['downsampling', 'binning', 'subsampling' ,'config']).mean().reset_index()
+print(summary_stats[['downsampling', 'binning', 'subsampling', 'acq', 'vol', 'recon', 'latency', 'throughput']])
+summary_stats = df.groupby(['downsampling', 'binning', 'subsampling' ,'config']).std().reset_index()
+print(summary_stats[['downsampling', 'binning', 'subsampling', 'acq', 'vol', 'recon', 'latency', 'throughput']])
 summary_stats['config'] = (
     "x" + summary_stats['binning'].astype(str) + " bin, " +
     "x" + summary_stats['subsampling'].astype(str) + " sub\n(x" +

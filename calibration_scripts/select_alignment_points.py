@@ -4,24 +4,26 @@
 # set "example_only" to True to test the GUI without saving information
 
 from matplotlib import pyplot as plt
+import sys
+sys.path.append('/home/steven/Documents/FiLMScope-sjt') 
 
 from filmscope.util import load_image_set
 from filmscope.calibration import CalibrationInfoManager
 from filmscope.config import path_to_data
 
 # image to be used to select the approximate alignment points
-image_filename = path_to_data + '/calibration_data/graph_03_20240812_114900_196.nc'
+image_filename = path_to_data + '/calibration_info/graph_00_20260324_184719_811.nc'
 
 # if example_only is True, 
 # this will use the example calibration filename and not save deleted vertices
-example_only = True
+example_only = False
 if example_only:
     calibration_filename = path_to_data + '/calibration_data/calibration_information_example'
 else:
-    calibration_filename = path_to_data + '/calibration_data/calibration_information'
+    calibration_filename = path_to_data + '/calibration_info/calibration_information'
 calibration_manager = CalibrationInfoManager(calibration_filename)
 image_numbers = calibration_manager.image_numbers
-
+print(image_numbers)
 # set "camera_number" to start with an image other than the first
 # this is useful if some alignment points have already been selected
 global camera_number

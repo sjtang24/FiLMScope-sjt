@@ -73,7 +73,7 @@ def convert_to_array_image_numbers(image_numbers, total_images=48, exif_orientat
         image_x_y_locs[i] = _convert_to_array_image_number(number)
     return image_x_y_locs
 
-def load_image_set(reference_no, images = None, filename=None, image_numbers=None, blank_filename=None,
+def load_image_set(reference_no=-1, images = None, filename=None, image_numbers=None, blank_filename=None,
                    downsample=1, frame_number=-1):
     if (filename is None) == (images is None):
         raise ValueError('Must either input a filename to dataset or the actual dataset!')
@@ -109,7 +109,7 @@ def load_image_set(reference_no, images = None, filename=None, image_numbers=Non
         if "frame_number" in dataset.dims:
             dataset = dataset.isel({"frame_number": 0})
 
-    images = []
+    images = [] if reference_no != -1 else {}
     for number in image_numbers:
         image_x_y_locs = convert_to_array_image_numbers([number])
         x_cam = image_x_y_locs[0, 0]
@@ -122,8 +122,10 @@ def load_image_set(reference_no, images = None, filename=None, image_numbers=Non
         if number == reference_no:
             reference_image = single_image
         single_image = single_image[::downsample, ::downsample]
-        images.append(single_image)  # 90° counter-clockwise
-
+        if reference_no != -1:
+            images.append(single_image)  # 90° counter-clockwise
+        else:
+            images[number] = single_image
         """images[number] = Image.fromarray(single_image)
         # rotate the necessary amount
         images[number] = images[number].transpose(Image.ROTATE_90)
@@ -149,7 +151,8 @@ def load_image_set(reference_no, images = None, filename=None, image_numbers=Non
             image = image - blank_image * exposure / blank_exposure
             images[key] = image
     #input(images)"""
-
+    if reference_no == -1:
+        return images
     return reference_image, images
 
 
