@@ -3,6 +3,7 @@ import numpy as np
 import owl.mcam_data as mcam_data
 import time 
 import sys
+import math
 from tqdm import tqdm 
 import os
 from filmscope.reconstruction import RunManager, generate_config_dict
@@ -22,7 +23,8 @@ import threading
 from concurrent.futures import ThreadPoolExecutor
 import csv
 from wgpu.gui.auto import run
-
+import pylinalg as la 
+from controller import SurgicalController
 os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 CROP_VALUES = (0.0, 1.0, 0.0, 1.0)
 N_ITERATIONS = 6000
@@ -73,7 +75,7 @@ def gaussian_blur(img, kernel_size, sigma):
     return img
 
 def go_home(camera):
-    camera.local.position = (0, -H, EXAG * 100)
+    camera.local.position = (0, -768, 1000)
     camera.look_at((0, 0, 0))
 
 def quit():
@@ -165,6 +167,7 @@ def animate():
             texture.set_data(computed_data['reference'])
             computed_data['new_data'] = False
     renderer.render(scene, camera)
+    controller.tick()
     canvas.request_draw()
 
 def animate_viz():
@@ -354,10 +357,9 @@ scene.add(points)
 camera = gfx.PerspectiveCamera()
 go_home(camera)
 
-controller = gfx.FlyController(camera)
-controller.speed = 500.0
-
-
+controller = SurgicalController(camera, H, W)
+#controller.speed = 500.0
+#print(camera.show_pos())
 
 '''image.local.scale_y = -1
 image.local.scale_x = -1
@@ -376,7 +378,7 @@ plane_xy = gfx.Mesh(plane_geometry, gfx.MeshBasicMaterial(color=(1, 0, 0, 0.15),
 #plane_xz.local.position = (0, H / 2, 0)
 #plane_yz.local.position = (-W / 2, 0, 0)
 #scene.add(plane_xy) #, plane_xz, plane_yz) 
-axis_positions = np.array(
+"""axis_positions = np.array(
     [[-W / 2, -H / 2, -H / 2], [W / 2, -H / 2, -H / 2],   # X
      [-W / 2, -H / 2, -H / 2], [-W / 2, H / 2, -H / 2],   # Y
      [-W / 2, -H / 2, -H / 2], [-W/ 2, -H / 2, H / 2],   # Z
@@ -386,10 +388,11 @@ axis_colors = np.array([
     [1,0,0,1],[1,0,0,1],
     [0,1,0,1],[0,1,0,1],
     [0,0,1,1],[0,0,1,1],
-], dtype=np.float32)
+], dtype=np.float32)"""
 
-geom = gfx.Geometry(positions=axis_positions, colors=axis_colors)
-scene.add(gfx.Line(geom, gfx.LineSegmentMaterial(thickness=3)))
+#geom = gfx.Geometry(positions=axis_positions, colors=axis_colors)
+#scene.add(gfx.Line(geom, gfx.LineSegmentMaterial(thickness=3)))
+#scene.local.rotation = la.quat_from_axis_angle((0, 0, 1), np.radians(90))
 
 compute_thread = threading.Thread(target = filmscope_loop, daemon=True)
 compute_thread.start()
@@ -407,7 +410,7 @@ canvas.request_draw(animate)
 # reference image 
 canvas_img = RenderCanvas(size = (575, 1080), title = 'Live Images')
 glfw.set_window_pos(canvas_img._window, 0, 0)
-camera_img = gfx.OrthographicCamera(zoom = 1.75)
+camera_img = gfx.OrthographicCamera(zoom = 1.25)
 scene_img = gfx.Scene()
 texture_img = gfx.Texture(computed_data['reference'], dim = 2)
 image = gfx.Image(
@@ -415,6 +418,8 @@ image = gfx.Image(
     gfx.ImageBasicMaterial(clim=(0, 255))
 )
 image.local.scale = (1., -1., 1.)
+angle_rad = math.radians(90)
+image.local.rotation = la.quat_from_euler((0, 0, angle_rad), order="XYZ")
 scene_img.add(image)
 scene_img.add(gfx.AmbientLight(intensity = 1))
 camera_img.show_object(scene_img)
